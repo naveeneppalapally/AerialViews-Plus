@@ -22,6 +22,7 @@ class NewPipeStreamExtractor(
             preferAdaptiveManifests = preferAdaptiveManifests,
             preferManifests = preferManifests,
         ).let { playback ->
+            YouTubeThrottling.noteExtractionSuccess()
             YouTubePlaybackUrls(videoUrl = playback.videoUrl, audioUrl = playback.audioUrl)
         }
 }

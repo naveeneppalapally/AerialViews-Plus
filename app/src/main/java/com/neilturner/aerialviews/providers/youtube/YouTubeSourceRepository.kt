@@ -55,6 +55,12 @@ class YouTubeSourceRepository(
     }
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingManualFullRebuild = AtomicBoolean(false)
+
+    init {
+        // Restores persisted breaker state; without this a process death
+        // (TV kills background dreams constantly) would hammer a live gate.
+        YouTubeThrottling.init(sharedPreferences)
+    }
     
     suspend fun triggerFullLibraryRebuild() {
         if (!refreshMutex.tryLock()) {
@@ -80,6 +86,11 @@ class YouTubeSourceRepository(
                 }
                 throw exception
             }
+        } catch (exception: YouTubeBotBlockedException) {
+            // Distinct from failure: the gate is up, the cache is intact, and
+            // the user deserves a reason — not a spin, not a scary error.
+            _refreshEvents.emit(RefreshEvent.BotBlocked(exception.cooldownMinutes))
+            Timber.tag(TAG).i(exception, "Library rebuild skipped, YouTube bot gate is up")
         } catch (exception: Exception) {
             Timber.tag(TAG).e(exception, "Forced library rebuild failed or timed out")
         } finally {
@@ -116,6 +127,10 @@ class YouTubeSourceRepository(
     
     sealed interface RefreshEvent {
         data object AlreadyInProgress : RefreshEvent
+
+        data class BotBlocked(
+            val cooldownMinutes: Long,
+        ) : RefreshEvent
     }
 
     @Volatile
@@ -426,6 +441,9 @@ class YouTubeSourceRepository(
                 if (removedCount > 0 || insertedCount > 0) {
                     clearPreResolvedEntry()
                 }
+                if (insertedCount == 0 && addedCategories.isNotEmpty() && YouTubeThrottling.isBlocked()) {
+                    _refreshEvents.emit(RefreshEvent.BotBlocked(YouTubeThrottling.remainingCooldownMinutes()))
+                }
                 val dbCount = cacheDao.countGoodEntries()
                 markCategoryStateFresh(dbCount)
                 Log.i(
@@ -533,11 +551,17 @@ class YouTubeSourceRepository(
                         val entry =
                             cacheDao.getByVideoPageUrl(videoPageUrl)
                                 ?.takeIf { !it.isBad }
-                                ?: buildDirectCacheEntry(
-                                    videoPageUrl = videoPageUrl,
-                                    cachedAt = System.currentTimeMillis(),
-                                    preferredQuality = preferredQuality(),
-                                )
+                                ?: if (YouTubeThrottling.isBlocked()) {
+                                    // No cached row and the gate is up: extracting
+                                    // here would burn time and hammer the edge.
+                                    return@launch
+                                } else {
+                                    buildDirectCacheEntry(
+                                        videoPageUrl = videoPageUrl,
+                                        cachedAt = System.currentTimeMillis(),
+                                        preferredQuality = preferredQuality(),
+                                    )
+                                }
                                 ?: return@launch
                         val resolvedAt = System.currentTimeMillis()
                         val resolvedPlayback =
@@ -692,7 +716,14 @@ class YouTubeSourceRepository(
             }
 
             val directEntry =
-                fetchDirectEntry(videoPageUrl) ?: throw YouTubeSourceException("No videos available")
+                fetchDirectEntry(videoPageUrl) ?: throw if (YouTubeThrottling.isBlocked()) {
+                    // Distinct from "no videos": the gate is up and nothing
+                    // cached is usable. Callers skip fast; future UI can show
+                    // the cooldown notice instead of a generic error.
+                    YouTubeBotBlockedException(YouTubeThrottling.remainingCooldownMinutes())
+                } else {
+                    YouTubeSourceException("No videos available")
+                }
 
             recordPlayback(directEntry)
             maybeWarmSearchCacheNearPlaylistEnd()
@@ -795,6 +826,11 @@ class YouTubeSourceRepository(
         }
 
         return try {
+            // Fail fast: searching while gated burns minutes to learn what the
+            // breaker already knows — no extraction can succeed right now.
+            if (YouTubeThrottling.isBlocked()) {
+                throw YouTubeBotBlockedException(YouTubeThrottling.remainingCooldownMinutes())
+            }
             isRefreshing = true
             _isRefreshingFlow.value = true
             withTimeout(5 * 60 * 1000L) { // 5-minute safety timeout
@@ -807,10 +843,14 @@ class YouTubeSourceRepository(
                         replaceExistingCache = replaceExistingCache,
                         initialCount = refreshPlan.existingEntries.size,
                     )
+                // (Mid-refresh gate drops are reported distinctly from inside
+                // extractRefreshEntries, which sees the eager/metadata split.)
                 val entries = mergeRefreshedEntries(refreshPlan, extractedEntries, replaceExistingCache)
                 persistFreshEntries(refreshPlan, entries)
                 topUpCacheToTargetAfterRefresh(entries)
             }
+        } catch (exception: YouTubeBotBlockedException) {
+            throw exception
         } catch (exception: Exception) {
             val fallbackEntries = categoryManager.filteredExistingEntries(cacheDao.getAllGood())
             if (fallbackEntries.isNotEmpty()) {
@@ -924,26 +964,84 @@ class YouTubeSourceRepository(
                 .let(::deduplicateCandidatesByTitle)
                 .let(::deduplicateCandidatesByVideoId)
                 .let { applyCandidateDiversityCaps(it, EXTRACTION_TARGET_SIZE) }
- 
-        val extractedEntries =
+
+        // Hybrid JIT: only the head gets eager extraction (instant-start
+        // buffer + offline resilience). The tail is stored as metadata-only
+        // (streamUrl="") and resolved at playback time. Eagerly extracting
+        // all 200 burns ~800 player calls — the bot magnet — for URLs that
+        // mostly expire (5.5h TTL) before ever playing.
+        val eagerCandidates = rankedCandidates.take(EAGER_EXTRACTION_BUDGET)
+        val metadataCandidates =
+            rankedCandidates.drop(EAGER_EXTRACTION_BUDGET).take(EXTRACTION_TARGET_SIZE - EAGER_EXTRACTION_BUDGET)
+
+        val eagerEntries =
             extractEntries(
-                items = rankedCandidates,
+                items = eagerCandidates,
                 cachedAt = refreshPlan.cachedAt,
                 preferredQuality = refreshPlan.preferredQuality,
-                limit = EXTRACTION_TARGET_SIZE,
+                limit = EAGER_EXTRACTION_BUDGET,
                 publishMinimumCache = refreshPlan.existingEntries.size < COLD_CACHE_SKIP_THRESHOLD,
                 publishProgress = true,
                 initialCount = if (replaceExistingCache) 0 else initialCount,
             )
+        if (eagerEntries.isEmpty() && eagerCandidates.isNotEmpty() && YouTubeThrottling.isBlocked()) {
+            // The gate dropped mid-refresh after searches already ran:
+            // report it distinctly instead of a silent stale fallback.
+            throw YouTubeBotBlockedException(YouTubeThrottling.remainingCooldownMinutes())
+        }
+        val metadataEntries =
+            buildMetadataEntries(
+                candidates = metadataCandidates,
+                cachedAt = refreshPlan.cachedAt,
+            )
+        val extractedEntries = (eagerEntries + metadataEntries).take(EXTRACTION_TARGET_SIZE)
 
         Timber.tag(TAG).i(
-            "Extracted YouTube refresh entries (search=%s, filtered=%s, ranked=%s, extracted=%s)",
+            "Extracted YouTube refresh entries (search=%s, filtered=%s, ranked=%s, eager=%s, metadata=%s)",
             searchResults.size,
             filteredCandidates.size,
             rankedCandidates.size,
-            extractedEntries.size,
+            eagerEntries.size,
+            metadataEntries.size,
         )
         return extractedEntries
+    }
+
+    /**
+     * Metadata-only entries: no network, no player calls. Playback resolves
+     * the stream just-in-time via resolveEntryPlayback.
+     */
+    private fun buildMetadataEntries(
+        candidates: List<SearchCandidate>,
+        cachedAt: Long,
+    ): List<YouTubeCacheEntity> {
+        if (candidates.isEmpty()) {
+            return emptyList()
+        }
+        val seenIds = mutableSetOf<String>()
+        return candidates.mapNotNull { candidate ->
+            val item = candidate.item
+            val videoPageUrl = item.getUrl().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val videoId = extractVideoId(videoPageUrl) ?: return@mapNotNull null
+            if (!seenIds.add(videoId)) {
+                return@mapNotNull null
+            }
+            val title = item.getName().takeIf { it.isNotBlank() } ?: videoPageUrl
+            val uploaderName = item.getUploaderName().orEmpty()
+            YouTubeCacheEntity(
+                videoId = videoId,
+                videoPageUrl = videoPageUrl,
+                streamUrl = "",
+                audioStreamUrl = "",
+                title = title,
+                uploaderName = uploaderName,
+                durationSeconds = item.getDuration().toInt(),
+                categoryKey = resolveCandidateCategoryKey(candidate, title, uploaderName),
+                streamUrlExpiresAt = 0L,
+                searchCachedAt = cachedAt,
+                searchQuery = candidate.searchQuery,
+            )
+        }
     }
 
     private fun mergeRefreshedEntries(
@@ -1069,6 +1167,7 @@ class YouTubeSourceRepository(
                         existingEntries = entriesSnapshot,
                         initialCount = cacheDao.countGoodEntries(),
                         extractionLimit = extractionLimitForCategory,
+                        metadataOnly = true,
                     )
                 if (insertedForCategory > 0) {
                     insertedTotal += insertedForCategory
@@ -1789,16 +1888,20 @@ class YouTubeSourceRepository(
         entry: YouTubeCacheEntity,
         recordPlayback: Boolean,
     ): YouTubePlaybackUrls {
-        // While the bot gate is up, never spend 25s discovering what we
-        // already know: play the cached URL even if expiring. A maybe-stale
-        // stream now beats a guaranteed black screen later.
-        if (YouTubeThrottling.isBlocked() && isUsableStreamUrl(entry.streamUrl)) {
-            Timber.tag(TAG).w("Bot cooldown active, reusing cached stream for %s", entry.videoId)
-            val reused = entryPlaybackUrls(entry)
-            if (recordPlayback) {
-                recordPlayback(entry)
+        // While the bot gate is up, never touch the network: every blocked
+        // extraction resets YouTube's sliding-window penalty clock. Reuse any
+        // usable cached URL; with nothing cached, fail fast as BotBlocked so
+        // callers skip instead of burning a 25s timeout per candidate.
+        if (YouTubeThrottling.isBlocked()) {
+            if (isUsableStreamUrl(entry.streamUrl)) {
+                Timber.tag(TAG).w("Bot cooldown active, reusing cached stream for %s", entry.videoId)
+                val reused = entryPlaybackUrls(entry)
+                if (recordPlayback) {
+                    recordPlayback(entry)
+                }
+                return reused
             }
-            return reused
+            throw YouTubeBotBlockedException(YouTubeThrottling.remainingCooldownMinutes())
         }
         val now = System.currentTimeMillis()
         val resolvedPlayback =
@@ -2199,6 +2302,11 @@ class YouTubeSourceRepository(
         existingEntries: List<YouTubeCacheEntity>,
         initialCount: Int,
         extractionLimit: Int = CATEGORY_DELTA_EXTRACTION_LIMIT,
+        // Full-refresh top-up passes true: beyond the eager budget, entries
+        // are metadata-only and resolve just-in-time at playback. Without
+        // this the top-up reintroduces the bulk-extraction burst the hybrid
+        // budget exists to prevent.
+        metadataOnly: Boolean = false,
     ): Int {
         val normalizedCategories =
             categoryKeys.map(String::trim).filter(String::isNotBlank)
@@ -2259,15 +2367,22 @@ class YouTubeSourceRepository(
             }
 
             val extractedEntries =
-                extractEntries(
-                    items = rankedCandidates,
-                    cachedAt = cachedAt,
-                    preferredQuality = preferredQuality(),
-                    limit = remainingToInsert,
-                    publishMinimumCache = false,
-                    publishProgress = true,
-                    initialCount = initialCount + insertedTotal,
-                )
+                if (metadataOnly) {
+                    buildMetadataEntries(
+                        candidates = rankedCandidates.take(remainingToInsert),
+                        cachedAt = cachedAt,
+                    )
+                } else {
+                    extractEntries(
+                        items = rankedCandidates,
+                        cachedAt = cachedAt,
+                        preferredQuality = preferredQuality(),
+                        limit = remainingToInsert,
+                        publishMinimumCache = false,
+                        publishProgress = true,
+                        initialCount = initialCount + insertedTotal,
+                    )
+                }
             if (extractedEntries.isEmpty()) {
                 return@repeat
             }
@@ -2747,6 +2862,11 @@ class YouTubeSourceRepository(
 
         private const val TARGET_CACHE_SIZE = 200
         private const val EXTRACTION_TARGET_SIZE = 200
+        // Eager extraction budget per full refresh: instant-start buffer +
+        // offline resilience for ~2-4h of viewing. Everything beyond this is
+        // metadata-only and resolves just-in-time at playback. 12 videos x up
+        // to ~3 player calls each stays far below bot tripwires.
+        private const val EAGER_EXTRACTION_BUDGET = 12
         private const val MIN_HEALTHY_CACHE_SIZE = 200
         private const val TARGET_CANDIDATE_POOL_SIZE = 600
         private const val EXTRACTION_BATCH_SIZE = 4

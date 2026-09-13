@@ -85,18 +85,22 @@ class YouTubeMediaProvider(
         return bootstrapMedia
     }
 
-    private suspend fun waitForStartupCacheWarm(): List<YouTubeCacheEntity> =
-        withTimeoutOrNull(INITIAL_CACHE_WARM_WAIT_MS) {
-            while (true) {
-                val snapshot = repository.getCachedVideosSnapshot()
-                if (snapshot.isNotEmpty()) {
-                    return@withTimeoutOrNull snapshot
+    // Cold start holds the loading screen briefly for a viable playlist
+    // instead of flashing 2 bootstrap clips: mid-session prebuild (see
+    // ScreenController) upgrades small playlists as refresh lands entries.
+    // Partial snapshots survive the timeout — 3 real videos beat bootstrap.
+    private suspend fun waitForStartupCacheWarm(): List<YouTubeCacheEntity> {
+        var latest = emptyList<YouTubeCacheEntity>()
+        withTimeoutOrNull(STARTUP_CACHE_WARM_WAIT_MS) {
+            while (latest.size < MIN_STARTUP_CACHE_ENTRIES) {
+                latest = repository.getCachedVideosSnapshot()
+                if (latest.size < MIN_STARTUP_CACHE_ENTRIES) {
+                    delay(INITIAL_CACHE_POLL_INTERVAL_MS)
                 }
-                delay(INITIAL_CACHE_POLL_INTERVAL_MS)
             }
-            @Suppress("UNREACHABLE_CODE")
-            emptyList()
-        } ?: emptyList()
+        }
+        return latest
+    }
 
     private fun List<YouTubeCacheEntity>.toAerialMedia(): List<AerialMedia> {
         if (isEmpty()) {
@@ -192,7 +196,8 @@ class YouTubeMediaProvider(
     }
 
     companion object {
-        private const val INITIAL_CACHE_WARM_WAIT_MS = 6_000L
+        private const val STARTUP_CACHE_WARM_WAIT_MS = 15_000L
+        private const val MIN_STARTUP_CACHE_ENTRIES = 6
         private const val INITIAL_CACHE_POLL_INTERVAL_MS = 250L
         private const val BOOTSTRAP_PRE_RESOLVE_COUNT = 2
         private const val DIRECT_PLAYBACK_WINDOW = 12

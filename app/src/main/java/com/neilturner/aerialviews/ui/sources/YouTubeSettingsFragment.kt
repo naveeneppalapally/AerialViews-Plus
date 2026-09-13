@@ -162,6 +162,16 @@ class YouTubeSettingsFragment : MenuStateFragment() {
                             Toast.LENGTH_SHORT,
                         )
                     }
+                    is YouTubeSettingsViewModel.YouTubeSettingsEvent.BotBlocked -> {
+                        ToastHelper.show(
+                            requireContext(),
+                            getString(
+                                R.string.youtube_refresh_rate_limited,
+                                event.cooldownMinutes.coerceAtLeast(1L),
+                            ),
+                            Toast.LENGTH_LONG,
+                        )
+                    }
                 }
             }
         }

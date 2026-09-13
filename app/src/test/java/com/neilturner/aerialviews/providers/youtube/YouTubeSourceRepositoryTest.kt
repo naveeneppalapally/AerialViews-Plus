@@ -9,9 +9,12 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
@@ -31,6 +34,7 @@ internal class YouTubeSourceRepositoryTest {
     @AfterEach
     fun tearDown() {
         unmockkStatic(Log::class)
+        YouTubeThrottling.clearForTest()
     }
 
     @Test
@@ -204,8 +208,116 @@ internal class YouTubeSourceRepositoryTest {
             val entries = repository.refreshSearchResults(replaceExistingCache = true)
 
             assertTrue(entries.isNotEmpty(), "Expected fakes to produce cache entries without network")
-            assertTrue(entries.all { it.streamUrl.startsWith("https://cdn.example.com/") })
+            // Hybrid JIT: small eager head with streams, metadata tail blank.
+            val eager = entries.filter { it.streamUrl.isNotBlank() }
+            val metadata = entries.filter { it.streamUrl.isBlank() }
+            assertTrue(eager.isNotEmpty() && eager.size <= 12)
+            assertTrue(eager.all { it.streamUrl.startsWith("https://cdn.example.com/") })
+            assertTrue(metadata.isNotEmpty())
+            assertTrue(metadata.all { it.streamUrlExpiresAt == 0L })
             assertEquals(entries.size, cacheDao.countGoodEntries())
+        }
+
+    @Test
+    @DisplayName("Should fail fast without searching while bot-blocked")
+    fun testRefreshFailsFastWhileBlocked() =
+        runTest {
+            val cacheDao = FakeYouTubeCacheDao(mutableListOf())
+            val searcher = FakeVideoSearcher()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = searcher,
+                    extractor = FakeStreamExtractor(),
+                )
+            // Block AFTER construction: init() loads persisted state, so a
+            // pre-construction block would be (correctly) wiped as stale.
+            YouTubeThrottling.noteBotBlock()
+
+            try {
+                repository.refreshSearchResults(replaceExistingCache = true)
+                fail("Expected YouTubeBotBlockedException")
+            } catch (exception: YouTubeBotBlockedException) {
+                assertTrue(exception.cooldownMinutes in 1..45)
+            }
+            assertEquals(0, searcher.searchCalls)
+            assertEquals(0, cacheDao.countGoodEntries())
+        }
+
+    @Test
+    @DisplayName("Should keep cache and notify while bot-blocked on rebuild")
+    fun testRebuildKeepsCacheWhileBlocked() =
+        runTest {
+            val cacheDao = FakeYouTubeCacheDao(buildEntries(System.currentTimeMillis()))
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = FakeVideoSearcher(),
+                    extractor = FakeStreamExtractor(),
+                )
+            YouTubeThrottling.noteBotBlock()
+
+            val events = mutableListOf<YouTubeSourceRepository.RefreshEvent>()
+            val collector =
+                backgroundScope.launch {
+                    repository.refreshEvents.collect { events += it }
+                }
+            // Park the collector in collect() BEFORE the rebuild emits.
+            runCurrent()
+
+            repository.triggerFullLibraryRebuild()
+
+            runCurrent()
+            collector.cancel()
+            assertTrue(events.filterIsInstance<YouTubeSourceRepository.RefreshEvent.BotBlocked>().size == 1)
+            assertEquals(200, cacheDao.countGoodEntries())
+        }
+
+    @Test
+    @DisplayName("Should throw BotBlocked without network while blocked with blank URL")
+    fun testBlockedResolveMakesNoNetworkCalls() =
+        runTest {
+            val metadataEntry =
+                YouTubeCacheEntity(
+                    videoId = "metavideo1",
+                    videoPageUrl = "https://www.youtube.com/watch?v=metavideo1",
+                    streamUrl = "",
+                    title = "Ambient forest real footage",
+                    uploaderName = "Fake Nature Channel",
+                    durationSeconds = 600,
+                    categoryKey = "nature",
+                    streamUrlExpiresAt = 0L,
+                    searchCachedAt = System.currentTimeMillis(),
+                    searchQuery = "4K aerial nature ambient",
+                )
+            val cacheDao = FakeYouTubeCacheDao(mutableListOf(metadataEntry))
+            val extractor = FakeStreamExtractor()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = FakeVideoSearcher(),
+                    extractor = extractor,
+                )
+            YouTubeThrottling.noteBotBlock()
+
+            try {
+                repository.resolveVideoPlayback("https://www.youtube.com/watch?v=metavideo1")
+                fail("Expected YouTubeBotBlockedException")
+            } catch (exception: YouTubeBotBlockedException) {
+                // Expected: fail fast, no 25s burn.
+            }
+            assertEquals(0, extractor.extractionCalls)
+            // Blank-URL guard must not poison the row for later retry.
+            assertEquals(1, cacheDao.countGoodEntries())
         }
 
     @Test
@@ -239,8 +351,19 @@ internal class YouTubeSourceRepositoryTest {
             )
         }.toMutableList()
 
-    private fun mockPackageContext(): Context {
-        val packageManager = mockk<PackageManager>()
+    private fun freshPrefs(): InMemorySharedPreferences =
+        InMemorySharedPreferences(
+            mutableMapOf(
+                YouTubeSourceRepository.KEY_CACHE_VERSION to 29,
+                YouTubeSourceRepository.KEY_CACHE_SIGNATURE to "1|v29",
+                YouTubeSourceRepository.KEY_STREAM_QUALITY_SIGNATURE to streamSignature("best"),
+                YouTubeSourceRepository.KEY_QUALITY to "best",
+                YouTubeHistoryTracker.KEY_FIRST_LAUNCH to false,
+                YouTubeHistoryTracker.KEY_FIRST_LAUNCH_INDEX to 0,
+            ),
+        )
+
+    private fun mockPackageContext(): Context {        val packageManager = mockk<PackageManager>()
         val packageInfo = mockk<PackageInfo>()
         every { packageInfo.longVersionCode } returns 1L
         every { packageManager.getPackageInfo(any<String>(), any<Int>()) } returns packageInfo
@@ -253,12 +376,15 @@ internal class YouTubeSourceRepositoryTest {
 
     private class FakeVideoSearcher : VideoSearcher {
         private var counter = 0
+        var searchCalls = 0
+            private set
 
         override suspend fun searchVideos(
             query: String,
             category: QueryFormulaEngine.ContentCategory?,
-        ): List<StreamInfoItem> =
-            (1..30).map {
+        ): List<StreamInfoItem> {
+            searchCalls += 1
+            return (1..30).map {
                 counter += 1
                 StreamInfoItem(
                     0,
@@ -270,9 +396,13 @@ internal class YouTubeSourceRepositoryTest {
                     setDuration(600L)
                 }
             }
+        }
     }
 
     private class FakeStreamExtractor : StreamExtractor {
+        var extractionCalls = 0
+            private set
+
         override suspend fun extractPlaybackStreams(
             videoPageUrl: String,
             preferredQuality: String,
@@ -281,6 +411,7 @@ internal class YouTubeSourceRepositoryTest {
             preferAdaptiveManifests: Boolean,
             preferManifests: Boolean,
         ): YouTubePlaybackUrls {
+            extractionCalls += 1
             val videoId = videoPageUrl.substringAfter("v=").substringBefore("&").ifBlank { "unknown" }
             return YouTubePlaybackUrls(videoUrl = "https://cdn.example.com/$videoId.mp4")
         }

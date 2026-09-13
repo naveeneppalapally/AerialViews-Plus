@@ -3,6 +3,7 @@ package com.neilturner.aerialviews.ui.core
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -114,6 +115,7 @@ class ScreenController(
     private var sleepTimerJob: Job? = null
     private var preloadJob: Job? = null
     private var playlistRefreshJob: Job? = null
+    private var lastTinyPlaylistPrebuildAt = 0L
     private var initialPlaylistRetryJob: Job? = null
     private val metadataJobs = mutableMapOf<OverlayType, Job>()
     private var currentMedia: AerialMedia? = null
@@ -572,19 +574,33 @@ class ScreenController(
     }
 
     private fun prebuildUpcomingPlaylist() {
-        if (!this::playlist.isInitialized || playlist.size <= PLAYLIST_PREBUILD_MIN_SIZE) {
+        if (!this::playlist.isInitialized) {
             return
         }
 
-        val prebuildThreshold =
-            PLAYLIST_PREBUILD_REMAINING_ITEMS
-                .coerceAtMost((playlist.size - 2).coerceAtLeast(1))
-        if (playlist.remainingUntilWrap() > prebuildThreshold) {
-            return
-        }
+        // Tiny playlists (cold-start bootstrap) must upgrade mid-session as
+        // the background refresh lands entries — otherwise the dream loops a
+        // handful of videos until the next restart. Cooldown prevents a
+        // rebuild storm on every wrap of a 2-item list.
+        if (playlist.size <= PLAYLIST_PREBUILD_MIN_SIZE) {
+            if (pendingPlaylist != null || playlistRefreshJob != null) {
+                return
+            }
+            if (SystemClock.elapsedRealtime() - lastTinyPlaylistPrebuildAt < TINY_PLAYLIST_PREBUILD_COOLDOWN_MS) {
+                return
+            }
+            lastTinyPlaylistPrebuildAt = SystemClock.elapsedRealtime()
+        } else {
+            val prebuildThreshold =
+                PLAYLIST_PREBUILD_REMAINING_ITEMS
+                    .coerceAtMost((playlist.size - 2).coerceAtLeast(1))
+            if (playlist.remainingUntilWrap() > prebuildThreshold) {
+                return
+            }
 
-        if (pendingPlaylist != null || playlistRefreshJob != null) {
-            return
+            if (pendingPlaylist != null || playlistRefreshJob != null) {
+                return
+            }
         }
 
         playlistRefreshJob =
@@ -1447,6 +1463,7 @@ class ScreenController(
     companion object {
         const val PLAYLIST_PREBUILD_MIN_SIZE: Int = 8
         const val PLAYLIST_PREBUILD_REMAINING_ITEMS: Int = 11
+        const val TINY_PLAYLIST_PREBUILD_COOLDOWN_MS: Long = 60_000
         const val YOUTUBE_PLAYLIST_RETRY_DELAY_MS: Long = 5_000
         const val YOUTUBE_FORCE_REFRESH_EVERY_ATTEMPTS: Int = 3
         const val LOADING_FADE_OUT: Long = 300 // Fade out loading text

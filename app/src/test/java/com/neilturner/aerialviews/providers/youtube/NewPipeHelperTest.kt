@@ -5,8 +5,12 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import java.time.ZonedDateTime
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.localization.DateWrapper
 import org.schabi.newpipe.extractor.services.youtube.ItagItem
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.stream.VideoStream
 
 @DisplayName("NewPipe Helper Tests")
@@ -220,6 +224,264 @@ internal class NewPipeHelperTest {
     fun testRejectFourByThreeAspectRatio() {
         assertFalse(NewPipeHelper.hasPreferredAspectRatioForTest("1440x1080"))
     }
+
+    @Test
+    @DisplayName("Should allow frozen titles despite the zen word gate")
+    fun testFrozenTitleAllowedDespiteZen() {
+        assertFalse(NewPipeHelper.isLikelySyntheticWallpaperForTest("4K Frozen Waterfall Winter"))
+        assertFalse(
+            NewPipeHelper.isLikelyHumanContentForTest(
+                title = "4K Frozen Waterfall Winter",
+                uploader = "Nature Focus",
+                durationSeconds = 900,
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should reject zen garden slideshows by word match")
+    fun testZenGardenRejected() {
+        assertTrue(NewPipeHelper.isLikelySyntheticWallpaperForTest("Zen Garden Meditation"))
+    }
+
+    @Test
+    @DisplayName("Should reject forecast and presenter titles but keep storm footage")
+    fun testForecastRejectedStormAllowed() {
+        assertTrue(
+            NewPipeHelper.isLikelyHumanContentForTest(
+                title = "10-Day Forecast: Heat Dome Settles In",
+                uploader = "FOX Weather",
+            ),
+        )
+        assertTrue(
+            NewPipeHelper.isLikelyHumanContentForTest(
+                title = "Storm Damage Explained by Our Meteorologist",
+                uploader = "Weather Channel",
+            ),
+        )
+        assertFalse(
+            NewPipeHelper.isLikelyHumanContentForTest(
+                title = "Storm Clouds Over Mountains Real Footage",
+                uploader = "Sky Focus",
+                durationSeconds = 900,
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should reject sleep music compilations")
+    fun testSleepMusicRejected() {
+        assertTrue(
+            NewPipeHelper.isLikelyHumanContentForTest(
+                title = "3 Hours Relaxing Piano Music for Sleep",
+                uploader = "Soothing Sounds",
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should flag AI-branded uploaders and self-disclosing descriptions")
+    fun testAiUploaderAndDescription() {
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "AI Scenics",
+                ),
+            ),
+        )
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "Nature Focus",
+                    description = "Created with AI for relaxation",
+                ),
+            ),
+        )
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "Nature Focus",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should allow airport runway footage despite the Runway tool name")
+    fun testRunwayAirportAllowed() {
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "St. Maarten Airport Runway 4K Aerial",
+                    uploader = "Aviation Daily",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should allow American Pika wildlife despite the Pika tool name")
+    fun testPikaMammalAllowed() {
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "American Pika in the Rockies",
+                    uploader = "Wildlife Films",
+                ),
+            ),
+        )
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "Pika Labs",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should gate generator names by word boundary in titles")
+    fun testGeneratorWordBoundary() {
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(title = "Kling Mountain Dream 4K", uploader = "Nature Focus"),
+            ),
+        )
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(title = "Live Ocean Waves 4K", uploader = "Nature Focus"),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should catch AI branding glued into handles")
+    fun testGluedHandleDetection() {
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "Scenic Views",
+                    uploaderUrl = "https://www.youtube.com/@SoraScenics",
+                ),
+            ),
+        )
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "John Smith",
+                    uploaderUrl = "https://www.youtube.com/@johnsmith4821",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should only flag low traction as a young-and-tiny combo")
+    fun testTractionCombo() {
+        // 500 views at 10 days: a small real pilot, must survive.
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Dolomites FPV Flight",
+                    uploader = "Solo Pilot",
+                    viewCount = 500L,
+                    uploadDaysAgo = 10L,
+                ),
+            ),
+        )
+        // 50 views at 10 days, unverified: slop-shaped.
+        assertTrue(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "Scenic Views",
+                    viewCount = 50L,
+                    uploadDaysAgo = 10L,
+                ),
+            ),
+        )
+        // Verified channels are exempt from traction entirely.
+        assertFalse(
+            NewPipeHelper.isLikelyAiForTest(
+                searchItem(
+                    title = "Beautiful Mountain Landscape",
+                    uploader = "BBC Earth",
+                    viewCount = 50L,
+                    uploadDaysAgo = 10L,
+                    verified = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    @DisplayName("Should reject non-VOD formats and Shorts at filter time")
+    fun testFormatGate() {        assertFalse(
+            NewPipeHelper.hasPlayableFormatForTest(
+                searchItem(
+                    title = "Live Nature Radio",
+                    uploader = "Nature Focus",
+                    streamType = StreamType.LIVE_STREAM,
+                ),
+            ),
+        )
+        assertFalse(
+            NewPipeHelper.hasPlayableFormatForTest(
+                searchItem(
+                    title = "Quick Waterfall Clip",
+                    uploader = "Nature Focus",
+                    durationSeconds = 30L,
+                ),
+            ),
+        )
+        assertTrue(
+            NewPipeHelper.hasPlayableFormatForTest(
+                searchItem(
+                    title = "Forest Walk Real Footage",
+                    uploader = "Nature Focus",
+                    durationSeconds = 900L,
+                ),
+            ),
+        )
+    }
+
+    private fun searchItem(
+        title: String,
+        uploader: String,
+        durationSeconds: Long = 600L,
+        streamType: StreamType = StreamType.VIDEO_STREAM,
+        description: String? = null,
+        viewCount: Long = -1L,
+        uploadDaysAgo: Long? = null,
+        uploaderUrl: String? = null,
+        verified: Boolean = false,
+    ): StreamInfoItem =
+        StreamInfoItem(
+            0,
+            "https://www.youtube.com/watch?v=testvideoid1",
+            title,
+            streamType,
+        ).apply {
+            uploaderName = uploader
+            setDuration(durationSeconds)
+            description?.let { setShortDescription(it) }
+            setViewCount(viewCount)
+            uploadDaysAgo?.let {
+                setUploadDate(
+                    DateWrapper(
+                        ZonedDateTime.now().minusDays(it).toInstant(),
+                    ),
+                )
+            }
+            uploaderUrl?.let { setUploaderUrl(it) }
+            setUploaderVerified(verified)
+        }
 
     private fun videoStream(
         itag: Int,

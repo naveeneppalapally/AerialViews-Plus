@@ -265,6 +265,7 @@
     <string name="youtube_refresh_dialog_message">Refreshing YouTube library…</string>
     <string name="youtube_refresh_searching">Searching for videos…</string>
     <string name="youtube_refresh_already_in_progress_toast">YouTube refresh is already in progress. Your Refresh Now request is queued.</string>
+    <string name="youtube_refresh_rate_limited">YouTube is temporarily rate-limiting this network — showing cached videos. Try again in ~%1$d min.</string>
 
     <!-- Main / Video Sources / Local+USB videos -->
     <string name="local_videos_enabled_title">Use Local or USB storage media</string>

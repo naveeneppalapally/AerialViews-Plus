@@ -27,7 +27,9 @@ import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.ContentAvailability
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.stream.VideoStream
 import java.net.URLEncoder
 import java.io.IOException
@@ -192,7 +194,10 @@ object NewPipeHelper {
         val withMetadata = rawCandidates.filter(::hasUsableMetadata)
         Log.i(TAG, "YouTube search candidates: raw=${rawCandidates.size} metadata=${withMetadata.size}")
 
-        val afterAiFilter = withMetadata.filterNot(::isLikelyAI)
+        val playableFormat = withMetadata.filter(::hasPlayableFormat)
+        Log.i(TAG, "After format filter: ${playableFormat.size} passed")
+
+        val afterAiFilter = playableFormat.filterNot(::isLikelyAI)
         Log.i(TAG, "After AI filter: ${afterAiFilter.size} passed")
 
         val afterHumanFilter =
@@ -241,6 +246,32 @@ object NewPipeHelper {
 
     private fun hasUsableMetadata(item: StreamInfoItem): Boolean =
         item.getUrl().isNotBlank() && item.getName().isNotBlank()
+
+    /**
+     * Format gate: only plain VOD belongs in an ambient cache. Live/upcoming/
+     * members-only/paid items fail later at extraction (wasted work), and
+     * Shorts are vertical — both rejected here instead.
+     */
+    private fun hasPlayableFormat(item: StreamInfoItem): Boolean {
+        if (item.getStreamType() != StreamType.VIDEO_STREAM) {
+            return false
+        }
+        if (item.isShortFormContent()) {
+            return false
+        }
+        // Shorts backstop: some layouts don't flag them (duration -1 there).
+        val duration = item.getDuration()
+        if (duration in 1..59) {
+            return false
+        }
+        return when (item.getContentAvailability()) {
+            ContentAvailability.UPCOMING,
+            ContentAvailability.MEMBERSHIP,
+            ContentAvailability.PAID,
+            -> false
+            else -> true
+        }
+    }
 
     private fun isFilteredCandidate(item: StreamInfoItem): Boolean {
         val titleLower = item.getName().lowercase(Locale.US)
@@ -790,11 +821,34 @@ object NewPipeHelper {
         if (AI_WORD_REGEX.containsMatchIn(titleLower) || AI_PUNCT_WORD_REGEX.containsMatchIn(titleLower)) {
             return true
         }
+        // Bare generator names are word-boundary gated, never substrings:
+        // "veo" fires inside "evolve", "luma" inside "plumage".
+        if (AI_TITLE_WORD_REGEXES.any { it.containsMatchIn(titleLower) }) {
+            return true
+        }
 
         return QueryFormulaEngine.aiVideoBlacklist.any { blacklisted ->
             titleLower.contains(blacklisted.lowercase(Locale.US))
         }
     }
+
+    private val AI_TITLE_WORD_REGEXES =
+        listOf(
+            "veo",
+            "kling",
+            "hailuo",
+            "minimax",
+            "luma",
+            "pixverse",
+            "jimeng",
+            "dreamina",
+            "hunyuan",
+            "genmo",
+            "kaiber",
+            "seaweed",
+        ).map { token ->
+            Regex("\\b${Regex.escape(token)}\\b")
+        }
 
     private fun isLikelyAI(item: StreamInfoItem): Boolean {
         // Title/channel signals only: exact-hour durations (1h/2h/...) are the
@@ -803,10 +857,77 @@ object NewPipeHelper {
         val titleLower = item.getName().lowercase(Locale.US)
         val uploaderLower = item.getUploaderName().orEmpty().lowercase(Locale.US)
 
-        return isLikelyAiTitle(titleLower) ||
+        if (isLikelyAiTitle(titleLower)) {
+            return true
+        }
+        if (
             AI_CHANNEL_PATTERNS.any { pattern ->
                 uploaderLower.contains(pattern)
             }
+        ) {
+            return true
+        }
+        // Slop farms brand in the uploader name/handle while keeping titles
+        // clean ("AI Scenics", "@AIRelaxationTV4K"). Word-boundary matching so
+        // real words don't trip it.
+        if (AI_UPLOADER_WORD_REGEXES.any { it.containsMatchIn(uploaderLower) }) {
+            return true
+        }
+        if (uploaderHandleIndicatesAi(item.getUploaderUrl().orEmpty())) {
+            return true
+        }
+        // Self-disclosure lives in the description, invisible to title filters.
+        if (DESCRIPTION_AI_PATTERNS.any { item.getShortDescription().orEmpty().lowercase(Locale.US).contains(it) }) {
+            return true
+        }
+        // Mass-uploaded slop has near-zero views per video. Only as a combo
+        // with a young upload date (never alone — small pilots deserve a
+        // chance), and verified channels are exempt outright.
+        if (!item.isUploaderVerified() && isLowTractionFreshUpload(item)) {
+            return true
+        }
+        return false
+    }
+
+    private fun uploaderHandleIndicatesAi(uploaderUrl: String): Boolean {
+        val rawHandle =
+            uploaderUrl
+                .substringAfter("/@", "")
+                .substringBefore('?')
+                .substringBefore('/')
+                .ifBlank {
+                    uploaderUrl
+                        .substringAfter("/c/", "")
+                        .substringBefore('?')
+                        .substringBefore('/')
+                }.takeIf { it.isNotBlank() }
+                ?: return false
+        // Camel-split needs original case ("SoraScenics" -> sora + scenics).
+        if (splitHandleTokens(rawHandle).any { it in AI_UPLOADER_WORDS }) {
+            return true
+        }
+        val handle = rawHandle.lowercase(Locale.US)
+        if (AI_UPLOADER_WORD_REGEXES.any { it.containsMatchIn(handle) }) {
+            return true
+        }
+        val digits = handle.count(Char::isDigit)
+        val letters = handle.count(Char::isLetter)
+        return digits >= 3 && digits >= letters
+    }
+
+    private fun splitHandleTokens(handle: String): List<String> =
+        handle
+            .split(Regex("(?<=[a-z])(?=[A-Z])|[_\\-.\\s]+|(?<=\\D)(?=\\d)|(?<=\\d)(?=\\D)"))
+            .map { it.lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+
+    private fun isLowTractionFreshUpload(item: StreamInfoItem): Boolean {
+        val views = item.getViewCount()
+        if (views !in 0..LOW_TRACTION_MAX_VIEWS) {
+            return false
+        }
+        val uploadedAt = item.getUploadDate()?.getInstant() ?: return false
+        return uploadedAt.isAfter(ZonedDateTime.now().minusDays(LOW_TRACTION_MAX_AGE_DAYS).toInstant())
     }
 
     private fun isBumperOrVlogTitle(titleLower: String): Boolean =
@@ -825,7 +946,11 @@ object NewPipeHelper {
             isTopListTitle(titleLower) ||
             hasDramaticPipePattern(title) ||
             HUMAN_TITLE_BLACKLIST.any(titleLower::contains) ||
+            TITLE_WORD_REGEXES.any { it.containsMatchIn(titleLower) } ||
+            LOFI_REGEX.containsMatchIn(titleLower) ||
+            TITLE_WORD_REGEXES.any { it.containsMatchIn(titleLower) } ||
             HUMAN_CHANNEL_BLACKLIST.any(uploaderLower::contains) ||
+            CHANNEL_WORD_REGEXES.any { it.containsMatchIn(uploaderLower) } ||
             isLikelyTextHeavyEducationalContent(titleLower, uploaderLower, durationSeconds) ||
             isLikelyFastMotionContent(titleLower) ||
             PERSONAL_VLOG_TITLE_REGEX.containsMatchIn(title)
@@ -836,6 +961,13 @@ object NewPipeHelper {
         uploader: String = "",
         durationSeconds: Long? = null,
     ): Boolean = isHumanContent(title = title, uploader = uploader, durationSeconds = durationSeconds)
+
+    internal fun isLikelyAiForTest(item: StreamInfoItem): Boolean = isLikelyAI(item)
+
+    internal fun isLikelySyntheticWallpaperForTest(title: String): Boolean =
+        isLikelySyntheticWallpaperTitle(title.lowercase(Locale.US))
+
+    internal fun hasPlayableFormatForTest(item: StreamInfoItem): Boolean = hasPlayableFormat(item)
 
     private fun isLikelyTextHeavyEducationalContent(
         titleLower: String,
@@ -945,9 +1077,10 @@ object NewPipeHelper {
     }
 
     private fun isLikelySyntheticWallpaperTitle(titleLower: String): Boolean =
-        SYNTHETIC_WALLPAPER_BLACKLIST.any { token ->
-            titleLower.contains(token)
-        }
+        WALLPAPER_WORD_REGEXES.any { it.containsMatchIn(titleLower) } ||
+            SYNTHETIC_WALLPAPER_BLACKLIST.any { token ->
+                titleLower.contains(token)
+            }
 
     private fun decoderSupport(
         codecFamily: CodecFamily,
@@ -1386,7 +1519,8 @@ object NewPipeHelper {
             "veo",
             "sora",
             "kling",
-            "pika",
+            "pika labs",
+            "pika ai",
             "pixverse",
             "luma ai",
             "hailuo",
@@ -1398,13 +1532,53 @@ object NewPipeHelper {
             "study",
             "meditation",
             "healing",
-            "zen",
             "slideshow",
             "backgrounds",
             "stock footage",
             "travel wallpaper",
             "nature wallpaper",
+            "relaxing music",
+            "sleep music",
+            "sleep sounds",
+            "meditation music",
+            "healing music",
+            "spa music",
+            "yoga music",
+            "ambient music",
+            "guided meditation",
+            "morning affirmations",
+            "432hz",
+            "528hz",
+            "432 hz",
+            "528 hz",
+            "solfeggio",
+            "binaural",
+            "deep sleep",
+            "all night",
+            "hours of",
+            "still image",
+            "static image",
+            "photo slideshow",
+            "official audio",
+            "behind the scenes",
+            "dj mix",
+            "nonstop mix",
+            "hour mix",
+            "music mix",
+            "song cover",
+            "cover song",
+            "lyrics",
+            "piano music",
+            "guitar music",
+            "karaoke",
         )
+    // Bare "zen"/"spa"/"tv" must never be substring-matched ("frozen"
+    // waterfall is a legit WINTER query, "space" contains "spa"). These are
+    // word-boundary gated instead.
+    private val WALLPAPER_WORD_REGEXES =
+        listOf("zen", "spa", "tv").map { token ->
+            Regex("\\b${Regex.escape(token)}\\b")
+        }
     private val AI_CHANNEL_PATTERNS =
         listOf(
             "ai art",
@@ -1412,20 +1586,102 @@ object NewPipeHelper {
             "ai film",
             "ai nature",
             "ai generated",
-            "sora",
-            "kling",
-            "pika",
-            "veo",
-            "hailuo",
-            "haiper",
             "runway clips",
-            "runway",
             "synthwave",
             "neural",
             "diffusion studio",
             "ai cinema",
             "artificial",
         )
+    // Bare AI-tool tokens matched word-boundary-only against uploader names
+    // and handles ("AI Scenics", "@AIRelaxationTV"). Never substrings:
+    // "runway" is a real word (aviation/travel footage).
+    private val AI_UPLOADER_WORDS =
+        listOf(
+            "ai",
+            "sora",
+            "veo",
+            "kling",
+            "pika",
+            "luma",
+            "hailuo",
+            "haiper",
+            "midjourney",
+            "diffusion",
+            "genmo",
+            "kaiber",
+            "invideo",
+            "fliki",
+            "pictory",
+            "synthesia",
+            "deepbrain",
+            "minimax",
+        )
+    private val AI_UPLOADER_WORD_REGEXES =
+        AI_UPLOADER_WORDS.map { token ->
+            Regex("\\b${Regex.escape(token)}\\b")
+        }
+    // Self-disclosure hides in descriptions, invisible to title filters.
+    private val DESCRIPTION_AI_PATTERNS =
+        listOf(
+            "created with ai",
+            "generated with ai",
+            "generated by ai",
+            "made with sora",
+            "made with pika",
+            "made with kling",
+            "made with runway",
+            "made with luma",
+            "made with hailuo",
+            "made with midjourney",
+            "stable diffusion",
+            "text-to-video",
+            "image-to-video",
+            "ai voiceover",
+            "ai narration",
+            "ai slideshow",
+            "ai-generated",
+            "synthetic content",
+            "altered content",
+            "altered or synthetic content",
+            "significantly edited or digitally generated",
+            "created with generative ai",
+            "prompt:",
+            "negative prompt:",
+        )
+    private const val LOW_TRACTION_MAX_VIEWS = 99L
+    private const val LOW_TRACTION_MAX_AGE_DAYS = 21L
+    // Single-stem title signals, word-boundary gated. Bare substrings would
+    // fire on real words ("anchor" in "anchorage", "mix" in "mixed forest").
+    private val TITLE_WORD_REGEXES =
+        listOf(
+            "101",
+            "diy",
+            "demo",
+            "demos",
+            "hack",
+            "hacks",
+            "mix",
+            "talk",
+            "talks",
+            "talking",
+            "talked",
+            "host",
+            "hosts",
+            "hosted",
+            "hosting",
+            "speech",
+            "anchor",
+            "debate",
+            "rant",
+        ).map { token ->
+            Regex("\\b${Regex.escape(token)}\\b")
+        }
+    private val CHANNEL_WORD_REGEXES =
+        listOf("tv", "zen", "spa", "fm").map { token ->
+            Regex("\\b${Regex.escape(token)}\\b")
+        }
+    private val LOFI_REGEX = Regex("lo[-\\s]?fi")
     private val TEXT_HEAVY_TITLE_HINTS =
         listOf(
             "with text",
@@ -1447,6 +1703,11 @@ object NewPipeHelper {
             "transcript",
             "with labels",
             "info text",
+            "step by step",
+            "step-by-step",
+            "mistakes to avoid",
+            "beginner guide",
+            "deep dive",
         )
     private val TEXT_HEAVY_CHANNEL_HINTS =
         listOf(
@@ -1458,6 +1719,10 @@ object NewPipeHelper {
             "facts",
             "science explained",
             "history of",
+            "academy",
+            "university",
+            "coach",
+            "guru",
         )
     private val FAST_MOTION_TITLE_HINTS =
         listOf(
@@ -1599,6 +1864,73 @@ object NewPipeHelper {
             "shocking",
             "brutal",
             "epic battle",
+            "weather forecast",
+            "day forecast",
+            "weather report",
+            "live radar",
+            "doppler",
+            "tornado warning",
+            "tornado watch",
+            "hurricane update",
+            "storm warning",
+            "severe weather",
+            "weather alert",
+            "weekend outlook",
+            "extended outlook",
+            "spaghetti model",
+            "tracking the storm",
+            "storm track",
+            "evacuation",
+            "meteorologist",
+            "accuweather",
+            "fox weather",
+            "weather nation",
+            "press conference",
+            "live coverage",
+            "breaking news",
+            "talking head",
+            "talking-head",
+            "facecam",
+            "commentary",
+            "panel discussion",
+            "monologue",
+            "sermon",
+            "stand-up",
+            "standup",
+            "travel with me",
+            "explore with me",
+            "join me",
+            "morning routine",
+            "night routine",
+            "evening routine",
+            "get unready",
+            "pack with me",
+            "life update",
+            "life lately",
+            "weekly vlog",
+            "weekend vlog",
+            "wedding vlog",
+            "birthday vlog",
+            "ask me anything",
+            "q&a",
+            "q & a",
+            "q and a",
+            "solo travel",
+            "van life",
+            "digital nomad",
+            "expat",
+            "couple travel",
+            "family vlog",
+            "first time in",
+            "why i left",
+            "i moved",
+            "i quit",
+            "ultimate guide",
+            "complete guide",
+            "masterclass",
+            "walkthrough",
+            "demonstration",
+            "do's and don'ts",
         )
     private val HUMAN_CHANNEL_BLACKLIST =
         listOf(
@@ -1632,6 +1964,31 @@ object NewPipeHelper {
             "animal planet",
             "nat geo wild",
             "discovery channel",
+            "weather channel",
+            "accuweather",
+            "fox weather",
+            "weather nation",
+            "met office",
+            "local news",
+            "meditation",
+            "soothing",
+            "relax",
+            "lullaby",
+            "mindful",
+            "wellness",
+            "spa sounds",
+            "sleep therapy",
+            "records",
+            "productions",
+            "ministry",
+            "church",
+            "academy",
+            "university",
+            "coach",
+            "guru",
+            "memes",
+            "esports",
+            "radio",
         )
     private val DRAMATIC_PIPE_WORDS =
         listOf(
@@ -1652,7 +2009,8 @@ object NewPipeHelper {
         )
     private val PERSONAL_VLOG_TITLE_REGEX =
         Regex(
-            "^[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2}\\s+(vlog|storytime|tutorial|review|challenge|podcast|interview)\\b",
+            "^[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2}\\s+(vlog|storytime|tutorial|review|challenge|podcast|interview|routine|update|morning|wedding)\\b",
+            RegexOption.IGNORE_CASE,
         )
     private val RESOLUTION_REGEX = Regex("(\\d{3,4})p")
     private val RESOLUTION_PAIR_REGEX = Regex("(\\d{3,4})\\s*[xX]\\s*(\\d{3,4})")

@@ -70,6 +70,10 @@ class YouTubeSettingsViewModel(
         data object AllCategoriesDisabled : YouTubeSettingsEvent
         data object LibraryFullOnCategory : YouTubeSettingsEvent
         data object RefreshAlreadyInProgress : YouTubeSettingsEvent
+
+        data class BotBlocked(
+            val cooldownMinutes: Long,
+        ) : YouTubeSettingsEvent
     }
 
     init {
@@ -84,6 +88,9 @@ class YouTubeSettingsViewModel(
                 when (event) {
                     com.neilturner.aerialviews.providers.youtube.YouTubeSourceRepository.RefreshEvent.AlreadyInProgress -> {
                         _events.send(YouTubeSettingsEvent.RefreshAlreadyInProgress)
+                    }
+                    is com.neilturner.aerialviews.providers.youtube.YouTubeSourceRepository.RefreshEvent.BotBlocked -> {
+                        _events.send(YouTubeSettingsEvent.BotBlocked(event.cooldownMinutes))
                     }
                 }
             }

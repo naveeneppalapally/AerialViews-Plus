@@ -72,7 +72,6 @@ object QueryFormulaEngine {
             "rendered by ai",
             "sora",
             "runway ml",
-            "runway",
             "stable diffusion",
             "midjourney video",
             "pika labs",
