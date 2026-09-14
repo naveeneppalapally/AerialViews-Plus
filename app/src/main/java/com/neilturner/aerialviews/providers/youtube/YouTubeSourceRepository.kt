@@ -769,7 +769,17 @@ class YouTubeSourceRepository(
                 preferredQuality = preferredQuality(),
             )
         }.getOrNull()?.also { directEntry ->
-            cacheDao.insertAll(listOf(directEntry))
+            // IGNORE preserves the stable categoryKey when this video is
+            // already cached; refresh only its stream URL below.
+            val inserted = cacheDao.insertIgnore(listOf(directEntry))
+            if (inserted.firstOrNull() == -1L && directEntry.streamUrl.isNotBlank()) {
+                cacheDao.updateStreamUrl(
+                    directEntry.videoId,
+                    directEntry.streamUrl,
+                    directEntry.audioStreamUrl,
+                    directEntry.streamUrlExpiresAt,
+                )
+            }
             updateCachedCount(cacheDao.countGoodEntries())
         }
     }
@@ -825,7 +835,17 @@ class YouTubeSourceRepository(
                     if (!isProjectivyStableStreamUrl(directEntry.streamUrl, projectivyQuality)) {
                         return@also
                     }
-                    cacheDao.insertAll(listOf(directEntry))
+                    // IGNORE preserves the stable categoryKey when this video
+                    // is already cached; refresh only its stream URL below.
+                    val inserted = cacheDao.insertIgnore(listOf(directEntry))
+                    if (inserted.firstOrNull() == -1L && directEntry.streamUrl.isNotBlank()) {
+                        cacheDao.updateStreamUrl(
+                            directEntry.videoId,
+                            directEntry.streamUrl,
+                            directEntry.audioStreamUrl,
+                            directEntry.streamUrlExpiresAt,
+                        )
+                    }
                     updateCachedCount(cacheDao.countGoodEntries())
                 }?.streamUrl
                 ?.takeIf(::isProjectivyUsableStreamUrl)
@@ -1378,7 +1398,25 @@ class YouTubeSourceRepository(
         refreshPlan: RefreshPlan,
         entries: List<YouTubeCacheEntity>,
     ) {
-        val uniqueEntries = deduplicateEntriesByVideoId(entries)
+        // Stable labels: the same video surfaces under many category queries
+        // ("4K aerial" matches everything), so each refresh would otherwise
+        // relabel it to whichever query found it this time. After a few
+        // refreshes a category's rows scatter across labels and toggle-off
+        // removal finds only a handful (e.g. 3 of ~25). First-seen label wins:
+        // reuse the stored categoryKey (unfiltered — including currently
+        // disabled categories) and only label genuinely new videos.
+        val stableCategoryKeys =
+            cacheDao.getAllGood()
+                .associate { it.videoId to it.categoryKey }
+        val uniqueEntries =
+            deduplicateEntriesByVideoId(entries).map { entry ->
+                val stableKey = stableCategoryKeys[entry.videoId]
+                if (!stableKey.isNullOrBlank() && stableKey != entry.categoryKey) {
+                    entry.copy(categoryKey = stableKey)
+                } else {
+                    entry
+                }
+            }
         cacheDao.clearAndInsert(uniqueEntries)
         badCountThisSession = 0
         recordRefreshHistory(uniqueEntries)
@@ -2704,7 +2742,22 @@ class YouTubeSourceRepository(
             }
 
             val beforeInsertCount = cacheDao.countGoodEntries()
-            cacheDao.insertAll(entriesToInsert)
+            // IGNORE keeps the first-seen categoryKey stable: when the same
+            // video is rediscovered under another category, REPLACE would
+            // silently relabel it and toggle-off removal could no longer find
+            // it (only a handful of rows removed instead of ~25). Upgrade
+            // streams on existing rows without touching their category.
+            val insertResults = cacheDao.insertIgnore(entriesToInsert)
+            entriesToInsert.forEachIndexed { index, entry ->
+                if (insertResults.getOrNull(index) == -1L && entry.streamUrl.isNotBlank()) {
+                    cacheDao.updateStreamUrl(
+                        entry.videoId,
+                        entry.streamUrl,
+                        entry.audioStreamUrl,
+                        entry.streamUrlExpiresAt,
+                    )
+                }
+            }
             val afterInsertCount = cacheDao.countGoodEntries()
 
             val insertedThisAttempt =

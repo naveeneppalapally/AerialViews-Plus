@@ -33,6 +33,7 @@ internal class YouTubeSourceRepositoryTest {
         mockkStatic(Log::class)
         every { Log.i(any(), any()) } returns 0
         every { Log.i(any(), any(), any()) } returns 0
+        every { Log.d(any(), any()) } returns 0
     }
 
     @AfterEach
@@ -450,6 +451,106 @@ internal class YouTubeSourceRepositoryTest {
 
             assertEquals(searchesAfterFirst, searcher.searchCalls)
             assertEquals(cacheDao.countGoodEntries(), second.size)
+        }
+
+    @Test
+    @DisplayName("Refresh keeps stable category labels so toggle-off removes the full set")
+    fun testRefreshPreservesCategoryLabelsForToggleOff() =
+        runTest {
+            // Regression: the same video surfaces under many category queries,
+            // so every refresh relabeled it to whichever query found it last.
+            // After a few refreshes a category's rows scattered across labels
+            // and toggle-off removed only a handful (3 of ~25 on TV).
+            val now = System.currentTimeMillis()
+            val seeded =
+                (1..5).map { index ->
+                    YouTubeCacheEntity(
+                        videoId = "shared$index",
+                        videoPageUrl = "https://www.youtube.com/watch?v=shared$index",
+                        streamUrl = "https://cdn.example.com/shared$index.mp4",
+                        title = "Ambient drone footage $index",
+                        uploaderName = "Drone Channel $index",
+                        durationSeconds = 600,
+                        categoryKey = "drone",
+                        streamUrlExpiresAt = now + 86_400_000L,
+                        searchCachedAt = now,
+                        searchQuery = "4k drone aerial",
+                        isBad = false,
+                        lastPlayedAt = 0L,
+                    )
+                }.toMutableList()
+            val cacheDao = FakeYouTubeCacheDao(seeded)
+            val prefs = freshPrefs()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = prefs,
+                    searcher = FixedIdSearcher((1..5).map { "shared$it" } + (1..5).map { "fresh$it" }),
+                    extractor = FakeStreamExtractor(),
+                )
+
+            repository.refreshSearchResults(replaceExistingCache = true)
+
+            val relabeled =
+                cacheDao.getAllGood().filter { it.videoId.startsWith("shared") && it.categoryKey != "drone" }
+            assertTrue(relabeled.isEmpty(), "Stable drone labels were overwritten: $relabeled")
+
+            prefs.edit().putBoolean(YouTubeSourceRepository.KEY_CATEGORY_DRONE, false).commit()
+            val result = repository.applyCategoryDeltaRefresh()
+
+            assertEquals(5, result.removedCount)
+            assertTrue(cacheDao.getAllGood().none { it.categoryKey == "drone" })
+        }
+
+    @Test
+    @DisplayName("insertIgnore preserves the stored row on conflict")
+    fun testInsertIgnorePreservesExistingRow() =
+        runTest {
+            val now = System.currentTimeMillis()
+            val cacheDao =
+                FakeYouTubeCacheDao(
+                    mutableListOf(
+                        YouTubeCacheEntity(
+                            videoId = "shared1",
+                            videoPageUrl = "https://www.youtube.com/watch?v=shared1",
+                            streamUrl = "https://cdn.example.com/shared1.mp4",
+                            title = "Ambient drone footage",
+                            uploaderName = "Drone Channel",
+                            durationSeconds = 600,
+                            categoryKey = "drone",
+                            streamUrlExpiresAt = now + 86_400_000L,
+                            searchCachedAt = now,
+                            searchQuery = "4k drone aerial",
+                            isBad = false,
+                            lastPlayedAt = 0L,
+                        ),
+                    ),
+                )
+
+            val results =
+                cacheDao.insertIgnore(
+                    listOf(
+                        YouTubeCacheEntity(
+                            videoId = "shared1",
+                            videoPageUrl = "https://www.youtube.com/watch?v=shared1",
+                            streamUrl = "https://cdn.example.com/shared1-new.mp4",
+                            title = "Ambient nature footage",
+                            uploaderName = "Nature Channel",
+                            durationSeconds = 600,
+                            categoryKey = "nature",
+                            streamUrlExpiresAt = now + 86_400_000L,
+                            searchCachedAt = now,
+                            searchQuery = "4k nature aerial",
+                            isBad = false,
+                            lastPlayedAt = 0L,
+                        ),
+                    ),
+                )
+
+            assertEquals(listOf(-1L), results)
+            assertEquals("drone", cacheDao.getAllGood().single().categoryKey)
         }
 
     @Test

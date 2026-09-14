@@ -23,6 +23,18 @@ interface YouTubeCacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entries: List<YouTubeCacheEntity>)
 
+    /**
+     * Insert-only: existing rows (matched by primary key) are left untouched.
+     * Returns the row id per entry, or -1 where a row already existed.
+     * Incremental paths must use this (plus [updateStreamUrl] for stream
+     * refreshes) instead of [insertAll]: REPLACE on conflict silently
+     * overwrites a video's stable [YouTubeCacheEntity.categoryKey] when the
+     * same video is rediscovered under another category, and toggle-off
+     * removal can then no longer find it.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(entries: List<YouTubeCacheEntity>): List<Long>
+
     @Query("DELETE FROM youtube_cache")
     suspend fun clearAll()
 

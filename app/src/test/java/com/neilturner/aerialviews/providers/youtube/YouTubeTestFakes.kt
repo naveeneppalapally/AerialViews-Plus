@@ -21,6 +21,16 @@ internal class FakeYouTubeCacheDao(
         this.entries.addAll(entries)
     }
 
+    override suspend fun insertIgnore(entries: List<YouTubeCacheEntity>): List<Long> =
+        entries.map { entry ->
+            if (this.entries.any { it.videoId == entry.videoId }) {
+                -1L
+            } else {
+                this.entries += entry
+                1L
+            }
+        }
+
     override suspend fun clearAll() {
         entries.clear()
     }

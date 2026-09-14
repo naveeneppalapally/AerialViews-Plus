@@ -30,6 +30,7 @@ internal class YouTubeLibraryStateTest {
         mockkStatic(Log::class)
         every { Log.i(any(), any()) } returns 0
         every { Log.i(any(), any(), any()) } returns 0
+        every { Log.d(any(), any()) } returns 0
     }
 
     @AfterEach
