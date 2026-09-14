@@ -28,6 +28,14 @@
 -keep class org.schabi.newpipe.** { *; }
 -dontwarn org.schabi.newpipe.**
 
+# Rhino JS engine (NewPipe transitive dep): references desktop-only
+# java.beans APIs that are never loaded on Android. R8-prescribed dontwarns.
+-dontwarn java.beans.BeanDescriptor
+-dontwarn java.beans.BeanInfo
+-dontwarn java.beans.IntrospectionException
+-dontwarn java.beans.Introspector
+-dontwarn java.beans.PropertyDescriptor
+
 # Sardine Android / XmlPullParser / Simple XML
 -keep class org.xmlpull.v1.** { *; }
 -dontwarn android.content.res.XmlResourceParser
