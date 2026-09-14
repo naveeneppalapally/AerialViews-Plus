@@ -9,7 +9,11 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -343,6 +347,56 @@ internal class YouTubeSourceRepositoryTest {
         }
 
     @Test
+    @DisplayName("Category removal does not wait for a full refresh mutex")
+    fun testCategoryRemovalDoesNotWaitForRefreshMutex() =
+        runTest {
+            val entries = buildEntries(System.currentTimeMillis())
+            (190 until 200).forEach { index ->
+                entries[index] =
+                    entries[index].copy(
+                        categoryKey = "animals",
+                        searchQuery = "wildlife animals ambient",
+                    )
+            }
+            val cacheDao = FakeYouTubeCacheDao(entries)
+            val sharedPreferences = freshPrefs()
+            val searchStarted = CompletableDeferred<Unit>()
+            val releaseSearch = CompletableDeferred<Unit>()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = sharedPreferences,
+                    searcher = BlockingVideoSearcher(searchStarted, releaseSearch),
+                    extractor = FakeStreamExtractor(),
+                )
+            val refreshJob =
+                backgroundScope.launch {
+                    repository.refreshSearchResults(replaceExistingCache = true)
+                }
+            searchStarted.await()
+
+            sharedPreferences.edit().putBoolean("yt_category_animals", false).commit()
+            try {
+                val result =
+                    withContext(Dispatchers.Default.limitedParallelism(1)) {
+                        withTimeout(5_000L) {
+                            repository.applyCategoryDeltaRefresh()
+                        }
+                    }
+
+                assertEquals(10, result.removedCount)
+                assertEquals(190, result.finalCount)
+                assertEquals(190, cacheDao.countGoodEntries())
+                assertTrue(repository.libraryState.value is YouTubeLibraryState.Idle)
+            } finally {
+                releaseSearch.complete(Unit)
+            }
+            refreshJob.join()
+        }
+
+    @Test
     @DisplayName("Should fail fast without searching while bot-blocked")
     fun testRefreshFailsFastWhileBlocked() =
         runTest {
@@ -540,6 +594,20 @@ internal class YouTubeSourceRepositoryTest {
                     setDuration(600L)
                 }
             }
+    }
+
+    private class BlockingVideoSearcher(
+        private val started: CompletableDeferred<Unit>,
+        private val release: CompletableDeferred<Unit>,
+    ) : VideoSearcher {
+        override suspend fun searchVideos(
+            query: String,
+            category: QueryFormulaEngine.ContentCategory?,
+        ): List<StreamInfoItem> {
+            started.complete(Unit)
+            release.await()
+            return emptyList()
+        }
     }
 
     private class ScarceVideoSearcher : VideoSearcher {        // Always the same 2 videos: forces every fallback pool to run.

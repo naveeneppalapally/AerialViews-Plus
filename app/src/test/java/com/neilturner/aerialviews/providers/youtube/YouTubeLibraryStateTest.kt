@@ -8,6 +8,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -94,6 +95,56 @@ internal class YouTubeLibraryStateTest {
         }
 
     @Test
+    @DisplayName("Category backfill reports monotonic committed progress")
+    fun testCategoryBackfillReportsMonotonicProgress() =
+        runTest {
+            val sharedPreferences = freshPrefs()
+            val editor = sharedPreferences.edit()
+            listOf(
+                YouTubeSourceRepository.KEY_CATEGORY_NATURE,
+                YouTubeSourceRepository.KEY_CATEGORY_ANIMALS,
+                YouTubeSourceRepository.KEY_CATEGORY_DRONE,
+                YouTubeSourceRepository.KEY_CATEGORY_CITIES,
+                YouTubeSourceRepository.KEY_CATEGORY_SPACE,
+                YouTubeSourceRepository.KEY_CATEGORY_OCEAN,
+                YouTubeSourceRepository.KEY_CATEGORY_WEATHER,
+                YouTubeSourceRepository.KEY_CATEGORY_WINTER,
+            ).forEach { editor.putBoolean(it, false) }
+            editor.commit()
+            val cacheDao = FakeYouTubeCacheDao(categoryEntries(199))
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = sharedPreferences,
+                    searcher = FakeVideoSearcher(),
+                    extractor = FakeStreamExtractor(),
+                )
+            runCurrent()
+            sharedPreferences.edit().putBoolean("yt_category_animals", true).commit()
+            val counts = mutableListOf<Int>()
+            val collector =
+                backgroundScope.launch(Dispatchers.Unconfined) {
+                    repository.libraryState.collect { state ->
+                        if (state is YouTubeLibraryState.Populating) counts += state.persistedCount
+                    }
+                }
+            runCurrent()
+
+            val result = repository.applyCategoryDeltaRefresh()
+
+            runCurrent()
+            collector.cancel()
+            assertTrue(result.insertedCount > 0, "Expected category backfill to insert an entry")
+            assertTrue(counts.isNotEmpty(), "Expected committed Populating progress")
+            counts.zipWithNext { first, second ->
+                assertTrue(second >= first, "Backfill progress moved backwards: $first -> $second")
+            }
+            assertTrue(counts.all { it <= cacheDao.countGoodEntries() })
+        }
+
+    @Test
     @DisplayName("Starved pool settles honestly below target")
     fun testStarvedPoolSettlesHonestly() =
         runTest {
@@ -161,6 +212,22 @@ internal class YouTubeLibraryStateTest {
             searcher = FakeVideoSearcher(),
             extractor = FakeStreamExtractor(),
         )
+
+    private fun categoryEntries(count: Int): MutableList<YouTubeCacheEntity> =
+        (1..count).map { index ->
+            YouTubeCacheEntity(
+                videoId = "categoryvideo$index",
+                videoPageUrl = "https://www.youtube.com/watch?v=categoryvideo$index",
+                streamUrl = "https://cdn.example.com/categoryvideo$index.mp4",
+                title = "Ambient nature video $index",
+                uploaderName = "Nature Channel $index",
+                durationSeconds = 600,
+                categoryKey = "animals",
+                streamUrlExpiresAt = System.currentTimeMillis() + 86_400_000L,
+                searchCachedAt = System.currentTimeMillis(),
+                searchQuery = "wildlife animals ambient",
+            )
+        }.toMutableList()
 
     private fun streamSignature(quality: String): String =
         "$quality|videoOnly=true|selector=v${YouTubeSourceRepository.STREAM_SELECTION_STRATEGY_VERSION}"

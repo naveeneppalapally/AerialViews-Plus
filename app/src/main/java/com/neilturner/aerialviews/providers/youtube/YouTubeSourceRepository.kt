@@ -370,13 +370,77 @@ class YouTubeSourceRepository(
 
     suspend fun applyCategoryDeltaRefresh(): DeltaRefreshResult =
         withContext(Dispatchers.IO) {
-            refreshMutex.withLock {
-                val currentEnabled = enabledCategoryKeys().toSet()
-                val previousEnabled = categoryManager.readCategorySnapshot().ifEmpty { currentEnabled }
-                val removedCategories = previousEnabled - currentEnabled
-                val addedCategories = currentEnabled - previousEnabled
-                val removedCategoriesCount = removedCategories.size
+            val currentEnabled = enabledCategoryKeys().toSet()
+            val previousEnabled = categoryManager.readCategorySnapshot()
+            val removedCategories = previousEnabled - currentEnabled
+            val addedCategories = currentEnabled - previousEnabled
+            val removedCategoriesCount = removedCategories.size
 
+            if (removedCategories.isNotEmpty()) {
+                val removedCount = categoryManager.applyCurrentCategoryFilterInternal()
+                val dbCount = cacheDao.countGoodEntries()
+                sharedPreferences.edit { putString(KEY_COUNT, dbCount.toString()) }
+                if (removedCount > 0) {
+                    clearPreResolvedEntry()
+                    _libraryState.value =
+                        YouTubeLibraryState.Removing(
+                            persistedCount = dbCount,
+                            removedCount = removedCount,
+                        )
+                }
+                markCategoryStateFresh(dbCount)
+                setLibraryStateIdle()
+                if (dbCount < TARGET_CACHE_SIZE && currentEnabled.isNotEmpty()) {
+                    scheduleBackgroundWarmCache(
+                        forceSearchRefresh = true,
+                        replaceExistingCacheOverride = false,
+                    )
+                }
+                return@withContext DeltaRefreshResult(
+                    removedCount = removedCount,
+                    insertedCount = 0,
+                    countAfterRemoval = dbCount,
+                    finalCount = dbCount,
+                    allCategoriesDisabled = currentEnabled.isEmpty(),
+                    libraryFull = dbCount >= TARGET_CACHE_SIZE,
+                    removedCategoriesCount = removedCategoriesCount,
+                )
+            }
+
+            val dbCount = cacheDao.countGoodEntries()
+            if (addedCategories.isEmpty()) {
+                markCategoryStateFresh(dbCount)
+                setLibraryStateIdle()
+                return@withContext DeltaRefreshResult(
+                    removedCount = 0,
+                    insertedCount = 0,
+                    countAfterRemoval = dbCount,
+                    finalCount = dbCount,
+                    allCategoriesDisabled = currentEnabled.isEmpty(),
+                    libraryFull = dbCount >= TARGET_CACHE_SIZE,
+                    removedCategoriesCount = 0,
+                )
+            }
+
+            if (!refreshMutex.tryLock()) {
+                markCategoryStateFresh(dbCount)
+                setLibraryStateIdle()
+                scheduleBackgroundWarmCache(
+                    forceSearchRefresh = true,
+                    replaceExistingCacheOverride = false,
+                )
+                return@withContext DeltaRefreshResult(
+                    removedCount = 0,
+                    insertedCount = 0,
+                    countAfterRemoval = dbCount,
+                    finalCount = dbCount,
+                    allCategoriesDisabled = false,
+                    libraryFull = dbCount >= TARGET_CACHE_SIZE,
+                    removedCategoriesCount = 0,
+                )
+            }
+
+            try {
                 var removedCount = 0
                 var insertedCount = 0
                 var countAfterRemoval = 0
@@ -389,7 +453,7 @@ class YouTubeSourceRepository(
                     removedCount = categoryManager.applyCurrentCategoryFilterInternal()
 
                     var entriesSnapshot = cacheDao.getAllGood()
-                    countAfterRemoval = entriesSnapshot.size
+                    countAfterRemoval = cacheDao.countGoodEntries()
                     sharedPreferences.edit { putString(KEY_COUNT, countAfterRemoval.toString()) }
                     if (removedCount > 0) {
                         _libraryState.value =
@@ -420,7 +484,7 @@ class YouTubeSourceRepository(
                             removedCount += evicted
                         }
                         entriesSnapshot = cacheDao.getAllGood()
-                        countAfterRemoval = entriesSnapshot.size
+                        countAfterRemoval = cacheDao.countGoodEntries()
                         preferredDeficitOrder = rebalanceOutcome.deficitCategories
                     }
 
@@ -513,6 +577,8 @@ class YouTubeSourceRepository(
                     libraryFull = cacheDao.countGoodEntries() >= TARGET_CACHE_SIZE,
                     removedCategoriesCount = removedCategoriesCount,
                 )
+            } finally {
+                refreshMutex.unlock()
             }
         }
 
@@ -911,14 +977,25 @@ class YouTubeSourceRepository(
                 finalEntries
             }
         } catch (exception: YouTubeBotBlockedException) {
+            _libraryState.value =
+                YouTubeLibraryState.BotBlocked(
+                    persistedCount = cacheDao.countGoodEntries(),
+                    cooldownMinutes = exception.cooldownMinutes,
+                )
             throw exception
         } catch (exception: Exception) {
             val fallbackEntries = categoryManager.filteredExistingEntries(cacheDao.getAllGood())
             if (fallbackEntries.isNotEmpty()) {
                 Timber.tag(TAG).w(exception, "Using filtered cached YouTube entries after refresh failure or timeout")
                 updateCachedCount(fallbackEntries.size)
+                setLibraryStateIdle()
                 fallbackEntries
             } else {
+                _libraryState.value =
+                    YouTubeLibraryState.Failed(
+                        persistedCount = cacheDao.countGoodEntries(),
+                        error = exception,
+                    )
                 throw when (exception) {
                     is YouTubeSourceException -> exception
                     else -> YouTubeSourceException("Failed to refresh YouTube videos or timed out", exception)
@@ -953,13 +1030,14 @@ class YouTubeSourceRepository(
     }
 
     private suspend fun searchRefreshCandidates(refreshPlan: RefreshPlan): List<SearchCandidate> {
+        val persistedCount = cacheDao.countGoodEntries()
         // Searching progress goes straight into the state flow: the fragment
         // renders queriesCompleted/queriesTotal as "Searching… X/Y" instead
         // of a frozen spinner. Silent phases were reported as stuck
         // refreshes, so the total grows honestly as fallback pools append.
         _libraryState.value =
             YouTubeLibraryState.Searching(
-                persistedCount = refreshPlan.existingEntries.size,
+                persistedCount = persistedCount,
                 candidatesFound = 0,
             )
         Log.i(TAG, "Refresh searching ${refreshPlan.queryPool.size} queries")
@@ -977,7 +1055,7 @@ class YouTubeSourceRepository(
                 onProgress = { completed, _ ->
                     _libraryState.value =
                         YouTubeLibraryState.Searching(
-                            persistedCount = refreshPlan.existingEntries.size,
+                            persistedCount = persistedCount,
                             candidatesFound = 0,
                             queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
                             queriesTotal = searchTotal,
@@ -1002,7 +1080,7 @@ class YouTubeSourceRepository(
                 }
                 _libraryState.value =
                     YouTubeLibraryState.Searching(
-                        persistedCount = refreshPlan.existingEntries.size,
+                        persistedCount = persistedCount,
                         candidatesFound = 0,
                         queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
                         queriesTotal = searchTotal,
@@ -1016,7 +1094,7 @@ class YouTubeSourceRepository(
                 }
                 _libraryState.value =
                     YouTubeLibraryState.Searching(
-                        persistedCount = refreshPlan.existingEntries.size,
+                        persistedCount = persistedCount,
                         candidatesFound = 0,
                         queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
                         queriesTotal = searchTotal,
@@ -1042,7 +1120,7 @@ class YouTubeSourceRepository(
                         onProgress = { completed, _ ->
                             _libraryState.value =
                                 YouTubeLibraryState.Searching(
-                                    persistedCount = refreshPlan.existingEntries.size,
+                                    persistedCount = persistedCount,
                                     candidatesFound = 0,
                                     queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
                                     queriesTotal = searchTotal,
@@ -1359,7 +1437,7 @@ class YouTubeSourceRepository(
             recordRefreshHistory(finalEntries)
             markCategoryStateFresh(finalEntries.size)
             // DB-committed count only — never the in-memory insert tally.
-            _libraryState.value = YouTubeLibraryState.Populating(persistedCount = finalEntries.size)
+            _libraryState.value = YouTubeLibraryState.Populating(persistedCount = cacheDao.countGoodEntries())
         }
         Timber.tag(TAG).i(
             "Full refresh top-up complete (initial=%s, inserted=%s, final=%s)",
@@ -2599,13 +2677,9 @@ class YouTubeSourceRepository(
             if (insertedThisAttempt > 0) {
                 insertedTotal += insertedThisAttempt
                 remainingToInsert = (extractionLimit - insertedTotal).coerceAtLeast(0)
-                if (metadataOnly) {
-                    // Metadata-only inserts commit straight to Room with no
-                    // eager phase, so report the DB-committed count here —
-                    // otherwise the counter freezes until the top-up ends.
-                    _libraryState.value =
-                        YouTubeLibraryState.Populating(persistedCount = afterInsertCount)
-                }
+                // Report once per committed attempt, never per in-memory extraction.
+                _libraryState.value =
+                    YouTubeLibraryState.Populating(persistedCount = afterInsertCount)
             }
         }
 
