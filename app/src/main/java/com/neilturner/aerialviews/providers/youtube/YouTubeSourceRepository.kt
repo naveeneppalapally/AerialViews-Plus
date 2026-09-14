@@ -10,11 +10,13 @@ import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -168,14 +170,19 @@ class YouTubeSourceRepository(
      * DB-committed count and self-corrects any preview skew.
      */
     suspend fun previewCategoryRemoval() {
-        val preview = categoryManager.previewCategoryRemovalSnapshot()
-        Log.d(TAG, "Removal preview: removed=${preview.removedCount} remaining=${preview.remainingCount}")
-        if (preview.removedCount > 0) {
-            _libraryState.value =
-                YouTubeLibraryState.Removing(
-                    persistedCount = preview.remainingCount,
-                    removedCount = preview.removedCount,
-                )
+        // Runs on dbDispatcher (see companion): blocking NewPipe network
+        // calls can saturate Dispatchers.IO for tens of seconds, and this
+        // millisecond read must never queue behind them.
+        withContext(dbDispatcher) {
+            val preview = categoryManager.previewCategoryRemovalSnapshot()
+            Log.d(TAG, "Removal preview: removed=${preview.removedCount} remaining=${preview.remainingCount}")
+            if (preview.removedCount > 0) {
+                _libraryState.value =
+                    YouTubeLibraryState.Removing(
+                        persistedCount = preview.remainingCount,
+                        removedCount = preview.removedCount,
+                    )
+            }
         }
     }
 
@@ -397,35 +404,41 @@ class YouTubeSourceRepository(
             Log.d(TAG, "Delta start: current=$currentEnabled previous=$previousEnabled removed=$removedCategories added=$addedCategories")
 
             if (removedCategories.isNotEmpty()) {
-                val removedCount = categoryManager.applyCurrentCategoryFilterInternal()
-                val dbCount = cacheDao.countGoodEntries()
-                Log.d(TAG, "Delta removal committed: removedRows=$removedCount dbCount=$dbCount")
-                sharedPreferences.edit { putString(KEY_COUNT, dbCount.toString()) }
-                if (removedCount > 0) {
-                    clearPreResolvedEntry()
-                    _libraryState.value =
-                        YouTubeLibraryState.Removing(
-                            persistedCount = dbCount,
+                // Delete on dbDispatcher (see companion): same IO-starvation
+                // reasoning as the preview above. No network happens here.
+                val result =
+                    withContext(dbDispatcher) {
+                        val removedCount = categoryManager.applyCurrentCategoryFilterInternal()
+                        val dbCount = cacheDao.countGoodEntries()
+                        Log.d(TAG, "Delta removal committed: removedRows=$removedCount dbCount=$dbCount")
+                        sharedPreferences.edit { putString(KEY_COUNT, dbCount.toString()) }
+                        if (removedCount > 0) {
+                            clearPreResolvedEntry()
+                            _libraryState.value =
+                                YouTubeLibraryState.Removing(
+                                    persistedCount = dbCount,
+                                    removedCount = removedCount,
+                                )
+                        }
+                        markCategoryStateFresh(dbCount)
+                        setLibraryStateIdle()
+                        DeltaRefreshResult(
                             removedCount = removedCount,
+                            insertedCount = 0,
+                            countAfterRemoval = dbCount,
+                            finalCount = dbCount,
+                            allCategoriesDisabled = currentEnabled.isEmpty(),
+                            libraryFull = dbCount >= TARGET_CACHE_SIZE,
+                            removedCategoriesCount = removedCategoriesCount,
                         )
-                }
-                markCategoryStateFresh(dbCount)
-                setLibraryStateIdle()
-                if (dbCount < TARGET_CACHE_SIZE && currentEnabled.isNotEmpty()) {
+                    }
+                if (result.finalCount < TARGET_CACHE_SIZE && currentEnabled.isNotEmpty()) {
                     scheduleBackgroundWarmCache(
                         forceSearchRefresh = true,
                         replaceExistingCacheOverride = false,
                     )
                 }
-                return@withContext DeltaRefreshResult(
-                    removedCount = removedCount,
-                    insertedCount = 0,
-                    countAfterRemoval = dbCount,
-                    finalCount = dbCount,
-                    allCategoriesDisabled = currentEnabled.isEmpty(),
-                    libraryFull = dbCount >= TARGET_CACHE_SIZE,
-                    removedCategoriesCount = removedCategoriesCount,
-                )
+                return@withContext result
             }
 
             val dbCount = cacheDao.countGoodEntries()
@@ -3287,6 +3300,18 @@ class YouTubeSourceRepository(
         private const val MINIMUM_VIABLE_CACHE_SIZE = 10
         private const val COLD_CACHE_SKIP_THRESHOLD = 5
         private const val BACKGROUND_REFRESH_COOLDOWN_MS = 10L * 60L * 1000L
+        /**
+         * Dedicated threads for the toggle delete path. Blocking NewPipe
+         * network calls can saturate Dispatchers.IO for tens of seconds
+         * (observed on TV: a millisecond DB read starved ~40s while a stream
+         * refresh worker ran extractions); the counter must never queue
+         * behind that pool. Daemon threads, shared across instances.
+         */
+        private val dbDispatcher by lazy {
+            java.util.concurrent.Executors.newFixedThreadPool(4) { runnable ->
+                Thread(runnable, "yt-toggle-db").apply { isDaemon = true }
+            }.asCoroutineDispatcher()
+        }
         private const val SEARCH_CALL_TIMEOUT_MS = 20_000L
         private const val EXTRACTION_CALL_TIMEOUT_MS = 25_000L
         private const val SEARCH_CACHE_TTL_MS = 24L * 60L * 60L * 1000L
