@@ -859,7 +859,7 @@ class YouTubeSourceRepository(
 
             val refreshedEntries =
                 when {
-                    cachedEntries.isEmpty() -> loadFreshSearchResults(replaceExistingCache = true)
+                    cachedEntries.isEmpty() -> loadFreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
                     forceSearchRefresh ||
                         isSearchCacheExpired() ||
                         isCacheVersionStale() ||
@@ -889,7 +889,7 @@ class YouTubeSourceRepository(
         val cachedEntries = cacheDao.getAllGood()
         if (cachedEntries.isEmpty()) {
             return try {
-                loadFreshSearchResults(replaceExistingCache = true)
+                loadFreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
             } catch (exception: Exception) {
                 throw when (exception) {
                     is YouTubeSourceException -> exception
@@ -921,15 +921,29 @@ class YouTubeSourceRepository(
 
     suspend fun refreshSearchResults(
         replaceExistingCache: Boolean = true,
+        skipIfPopulated: Boolean = false,
     ): List<YouTubeCacheEntity> =
         withContext(Dispatchers.IO) {
-            loadFreshSearchResults(replaceExistingCache)
+            loadFreshSearchResults(replaceExistingCache, skipIfPopulated)
         }
 
     private suspend fun loadFreshSearchResults(
         replaceExistingCache: Boolean = false,
+        skipIfPopulated: Boolean = false,
     ): List<YouTubeCacheEntity> {
         return refreshMutex.withLock {
+            // Deduplicate automatic cold fills. Several triggers race on an
+            // empty cache — the 10s prewarm, the 90s startup worker, a
+            // settings-open prewarm, concurrent playback demands — and the
+            // mutex only serializes them: the loser used to run a second
+            // full 25-query search after the winner persisted videos,
+            // burning quota and painting a phantom "Searching… x/25" the
+            // user never asked for. Re-check under the lock; if the winner
+            // already populated the cache, stand down and serve it.
+            // Forced paths (manual rebuild) bypass this via perform*.
+            if (skipIfPopulated && cacheDao.countGoodEntries() >= COLD_CACHE_SKIP_THRESHOLD) {
+                return@withLock categoryManager.filteredExistingEntries(cacheDao.getAllGood())
+            }
             performLoadFreshSearchResults(replaceExistingCache)
         }
     }

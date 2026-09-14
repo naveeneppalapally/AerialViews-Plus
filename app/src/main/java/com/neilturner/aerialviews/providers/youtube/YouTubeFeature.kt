@@ -79,7 +79,10 @@ object YouTubeFeature {
                 val cacheSize = currentRepository.getCacheSize()
                 if (cacheSize < MIN_PREWARM_CACHE_SIZE) {
                     Timber.tag(TAG).d("Cache cold (%s videos), pre-warming", cacheSize)
-                    currentRepository.refreshSearchResults()
+                    // skipIfPopulated: the startup worker (or another prewarm)
+                    // may already be filling; re-check under the lock instead
+                    // of queueing a duplicate 25-query search behind it.
+                    currentRepository.refreshSearchResults(skipIfPopulated = true)
                     Timber.tag(TAG).d("Pre-warm complete")
                 } else {
                     Timber.tag(TAG).d("Cache warm (%s videos), skipping pre-warm", cacheSize)

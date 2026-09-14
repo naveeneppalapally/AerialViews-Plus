@@ -397,6 +397,62 @@ internal class YouTubeSourceRepositoryTest {
         }
 
     @Test
+    @DisplayName("Automatic fill stands down when cache is already populated")
+    fun testSkipIfPopulatedStandsDownWhenPopulated() =
+        runTest {
+            // Models a warm cache hit by a duplicate automatic trigger
+            // (prewarm vs startup worker): no search should run.
+            val seeded = buildEntries(System.currentTimeMillis()).take(10).toMutableList()
+            val cacheDao = FakeYouTubeCacheDao(seeded)
+            val searcher = FakeVideoSearcher()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = searcher,
+                    extractor = FakeStreamExtractor(),
+                )
+
+            val result = repository.refreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
+
+            assertEquals(0, searcher.searchCalls)
+            assertEquals(10, result.size)
+            assertEquals(10, cacheDao.countGoodEntries())
+        }
+
+    @Test
+    @DisplayName("Duplicate automatic fills run once, second stands down")
+    fun testDuplicateAutomaticFillsRunOnce() =
+        runTest {
+            // Models the cold-start race: prewarm and startup worker both
+            // see an empty cache; the loser must serve the winner's fill
+            // instead of running a second 25-query search (phantom UI).
+            val cacheDao = FakeYouTubeCacheDao(mutableListOf())
+            val searcher = FakeVideoSearcher()
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = searcher,
+                    extractor = FakeStreamExtractor(),
+                )
+
+            val first = repository.refreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
+            assertTrue(first.isNotEmpty(), "Expected the first automatic fill to populate the cache")
+            val searchesAfterFirst = searcher.searchCalls
+            assertTrue(searchesAfterFirst > 0, "Expected the first fill to search")
+
+            val second = repository.refreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
+
+            assertEquals(searchesAfterFirst, searcher.searchCalls)
+            assertEquals(cacheDao.countGoodEntries(), second.size)
+        }
+
+    @Test
     @DisplayName("Should fail fast without searching while bot-blocked")
     fun testRefreshFailsFastWhileBlocked() =
         runTest {
