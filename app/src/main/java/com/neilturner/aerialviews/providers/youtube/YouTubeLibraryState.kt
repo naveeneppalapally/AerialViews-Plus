@@ -10,8 +10,9 @@ package com.neilturner.aerialviews.providers.youtube
  * - [persistedCount] is ALWAYS a Room-committed count, never an in-memory
  *   candidate accumulation.
  * - Only [Populating] and [Removing] carry a target denominator (200).
- * - [Searching] carries query progress (completed/total) plus banked
- *   candidate counts with no persisted denominator.
+ *   [Searching] and [CategoryPending] render the same way (persisted / 200
+ *   loading) — query progress (completed/total) stays in the state for
+ *   logs/diagnostics only and is never shown as the library count.
  */
 sealed interface YouTubeLibraryState {
     /** The actual number of valid videos currently persisted in SQLite. */
@@ -49,10 +50,10 @@ sealed interface YouTubeLibraryState {
 
     /**
      * Executing searches across category query formulas.
-     * candidatesFound provides honest banked progress without denominators;
-     * queriesCompleted/queriesTotal track the query cursor (the total grows
-     * as fallback pools are appended, so the count never sits still while
-     * queries run). A zero total means the query plan is still being built.
+     * persistedCount is the currently persisted video count (rendered as
+     * persisted / 200 loading). queriesCompleted/queriesTotal track the
+     * query cursor for logs only — never as the library counter.
+     * A zero total means the query plan is still being built.
      */
     data class Searching(
         override val persistedCount: Int,

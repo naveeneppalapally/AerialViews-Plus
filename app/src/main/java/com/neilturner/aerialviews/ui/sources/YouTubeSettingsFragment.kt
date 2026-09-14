@@ -335,9 +335,12 @@ class YouTubeSettingsFragment : MenuStateFragment() {
             }
 
             is YouTubeLibraryState.CategoryPending -> {
+                // Show the current persisted count immediately (x of 200
+                // loading) — never a blank "pending". The actual delete
+                // lands ~1.5s later after the toggle debounce.
                 updateVideoCount(staticCount = state.persistedCount)
                 updateCacheCountPreference(
-                    cachedCount = null,
+                    cachedCount = state.persistedCount,
                     loading = true,
                 )
             }
@@ -352,18 +355,17 @@ class YouTubeSettingsFragment : MenuStateFragment() {
             }
 
             is YouTubeLibraryState.Searching -> {
+                // Counter contract: ALWAYS persisted videos / 200. Query
+                // progress (x of 25, x of 41 with fallbacks) is a search
+                // implementation detail — showing it as the library count
+                // reads as a broken/stuck counter. Render the persisted
+                // count instead; it climbs as Populating commits. Query
+                // cursor stays in the state for logs/diagnostics only.
                 updateVideoCount(staticCount = state.persistedCount)
-                if (state.queriesTotal > 0) {
-                    findPreference<Preference>(PREFERENCE_CACHE_COUNT)?.summary =
-                        getString(
-                            R.string.youtube_refresh_searching_progress,
-                            state.queriesCompleted.coerceAtMost(state.queriesTotal),
-                            state.queriesTotal,
-                        )
-                } else {
-                    findPreference<Preference>(PREFERENCE_CACHE_COUNT)?.summary =
-                        getString(R.string.youtube_refresh_searching)
-                }
+                updateCacheCountPreference(
+                    cachedCount = state.persistedCount,
+                    loading = true,
+                )
             }
 
             is YouTubeLibraryState.Populating -> {
