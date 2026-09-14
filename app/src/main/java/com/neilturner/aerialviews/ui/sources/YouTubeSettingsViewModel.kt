@@ -4,19 +4,13 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.neilturner.aerialviews.providers.youtube.YouTubeFeature
+import com.neilturner.aerialviews.providers.youtube.YouTubeLibraryState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -24,34 +18,15 @@ class YouTubeSettingsViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val repository = YouTubeFeature.repository(application)
-    private val _refreshState = MutableStateFlow<RefreshState>(RefreshState.Idle)
-    private val _cacheSize = MutableStateFlow(-1)
     private var backgroundRefreshJob: Job? = null
 
-    val refreshState: StateFlow<RefreshState> = _refreshState.asStateFlow()
-    val cacheSize: StateFlow<Int> = _cacheSize.asStateFlow()
-    val settingsUiState: StateFlow<YouTubeSettingsUiState> = combine(
-        repository.isRefreshingFlow,
-        repository.cacheLoadingProgress.onStart { emit(null) },
-        _cacheSize,
-    ) { isRefreshing, progressPair, cacheCount ->
-        val progress = progressPair?.let { (current, total) -> YouTubeRefreshProgress(current, total) }
-        YouTubeSettingsUiState(
-            stage = deriveStage(isRefreshing, progressPair),
-            isRefreshing = isRefreshing,
-            cacheCount = cacheCount,
-            progress = progress,
-        )
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.Eagerly,
-        YouTubeSettingsUiState(
-            stage = YouTubeRefreshStage.IDLE,
-            isRefreshing = false,
-            cacheCount = _cacheSize.value,
-            progress = null,
-        ),
-    )
+    /**
+     * Single source of truth for the library counter (Phase 2, sole owner
+     * since Phase 4). The Fragment renders this flow passively; one-shot
+     * toasts still travel over [events].
+     */
+    val libraryState: StateFlow<YouTubeLibraryState> =
+        repository.libraryState
 
     private val _events = Channel<YouTubeSettingsEvent>(capacity = Channel.BUFFERED)
     val events = _events.receiveAsFlow()
@@ -79,11 +54,6 @@ class YouTubeSettingsViewModel(
     init {
         YouTubeFeature.preWarmIfNeeded(viewModelScope)
         viewModelScope.launch {
-            repository.cacheCount.collect { count ->
-                _cacheSize.value = count
-            }
-        }
-        viewModelScope.launch {
             repository.refreshEvents.collect { event ->
                 when (event) {
                     com.neilturner.aerialviews.providers.youtube.YouTubeSourceRepository.RefreshEvent.AlreadyInProgress -> {
@@ -95,14 +65,9 @@ class YouTubeSettingsViewModel(
                 }
             }
         }
-        refreshCacheSize()
     }
 
     fun refreshIfCachePending() {
-        if (_refreshState.value == RefreshState.Loading) {
-            return
-        }
-
         viewModelScope.launch {
             if (repository.getCacheSize() <= 0) {
                 refreshInBackground()
@@ -121,6 +86,9 @@ class YouTubeSettingsViewModel(
     }
 
     fun onCategoryChanged() {
+        // Honest debounce window: surface CategoryPending immediately so the
+        // UI never reverts to Idle while the toggle waits out the debounce.
+        repository.noteCategoryPending()
         backgroundRefreshJob?.cancel()
         backgroundRefreshJob =
             viewModelScope.launch {
@@ -182,60 +150,7 @@ class YouTubeSettingsViewModel(
             }
     }
 
-    fun refreshCacheSize() {
-        viewModelScope.launch {
-            _cacheSize.value = repository.getCacheSize()
-        }
-    }
-
-    fun setDisplayedCacheSize(count: Int) {
-        _cacheSize.value = count.coerceAtLeast(0)
-    }
-
-    fun clearRefreshState() {
-        _refreshState.value = RefreshState.Idle
-    }
-
-    private fun deriveStage(isRefreshing: Boolean, progress: Pair<Int, Int>?): YouTubeRefreshStage =
-        when {
-            !isRefreshing -> YouTubeRefreshStage.IDLE
-            progress == null -> YouTubeRefreshStage.FINALIZING
-            progress.first < 0 || progress.second < 0 -> YouTubeRefreshStage.SEARCHING
-            else -> YouTubeRefreshStage.EXTRACTING
-        }
-
     companion object {
         private const val CATEGORY_TOGGLE_DEBOUNCE_MS = 1500L
     }
 }
-
-sealed interface RefreshState {
-    data object Idle : RefreshState
-
-    data object Loading : RefreshState
-
-    data class Success(
-        val count: Int,
-    ) : RefreshState
-
-    data object Error : RefreshState
-}
-
-data class YouTubeSettingsUiState(
-    val stage: YouTubeRefreshStage,
-    val isRefreshing: Boolean,
-    val cacheCount: Int,
-    val progress: YouTubeRefreshProgress?,
-)
-
-enum class YouTubeRefreshStage {
-    IDLE,
-    SEARCHING,
-    EXTRACTING,
-    FINALIZING,
-}
-
-data class YouTubeRefreshProgress(
-    val current: Int,
-    val total: Int,
-)

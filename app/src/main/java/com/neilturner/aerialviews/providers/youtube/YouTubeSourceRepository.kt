@@ -65,20 +65,16 @@ class YouTubeSourceRepository(
     suspend fun triggerFullLibraryRebuild() {
         if (!refreshMutex.tryLock()) {
             pendingManualFullRebuild.set(true)
-            _isRefreshingFlow.value = true // Ensure UI sees it's locked
             _refreshEvents.emit(RefreshEvent.AlreadyInProgress)
             Log.i(TAG, "Manual rebuild queued, another refresh holds the lock")
             return
         }
         Log.i(TAG, "Manual library rebuild started")
         try {
-            isRefreshing = true
-            _isRefreshingFlow.value = true
             // Snapshot before refresh so a network failure/timeout can never wipe the library.
             val snapshot = cacheDao.getAllGood()
             try {
                 withTimeout(5 * 60 * 1000L) { // 5-minute safety timeout
-                    _cacheLoadingProgress.emit(Pair(0, TARGET_CACHE_SIZE))
                     performLoadFreshSearchResults(replaceExistingCache = true)
                 }
             } catch (exception: Exception) {
@@ -92,18 +88,30 @@ class YouTubeSourceRepository(
             // Distinct from failure: the gate is up, the cache is intact, and
             // the user deserves a reason — not a spin, not a scary error.
             _refreshEvents.emit(RefreshEvent.BotBlocked(exception.cooldownMinutes))
+            _libraryState.value =
+                YouTubeLibraryState.BotBlocked(
+                    persistedCount = cacheDao.countGoodEntries(),
+                    cooldownMinutes = exception.cooldownMinutes,
+                )
             Timber.tag(TAG).i(exception, "Library rebuild skipped, YouTube bot gate is up")
         } catch (exception: Exception) {
+            _libraryState.value =
+                YouTubeLibraryState.Failed(
+                    persistedCount = cacheDao.countGoodEntries(),
+                    error = exception,
+                )
             Timber.tag(TAG).e(exception, "Forced library rebuild failed or timed out")
         } finally {
             val finalCount = cacheDao.countGoodEntries()
-            // ORDER MATTERS: Set count FIRST, clear progress, THEN reset isRefreshing LAST
-            // so Fragment sees settled data when isRefreshing flips to false
-            _cacheCount.value = finalCount
             sharedPreferences.edit { putString(KEY_COUNT, finalCount.toString()) }
-            _cacheLoadingProgress.emit(null)
-            isRefreshing = false
-            _isRefreshingFlow.value = false
+            // Legacy settlement stays untouched; the state flow settles only
+            // on success paths inside performLoadFreshSearchResults so a
+            // failure state is never immediately overwritten by Idle.
+            if (_libraryState.value !is YouTubeLibraryState.BotBlocked &&
+                _libraryState.value !is YouTubeLibraryState.Failed
+            ) {
+                setLibraryStateIdle()
+            }
             Log.i(TAG, "Manual library rebuild finished, count=$finalCount")
             refreshMutex.unlock()
             if (pendingManualFullRebuild.getAndSet(false)) {
@@ -117,16 +125,53 @@ class YouTubeSourceRepository(
     private val backgroundWarmInFlight = AtomicBoolean(false)
     private val lastBackgroundWarmAt = AtomicLong(0L)
     private val preResolvedLock = Any()
-    private val _cacheCount = MutableStateFlow(sharedPreferences.getString(KEY_COUNT, "0")?.toIntOrNull() ?: 0)
-    val cacheCount: StateFlow<Int> = _cacheCount.asStateFlow()
     private val _cacheFullEvent = MutableStateFlow(false)
     val cacheFullEvent: StateFlow<Boolean> = _cacheFullEvent.asStateFlow()
-    private val _cacheLoadingProgress = MutableSharedFlow<Pair<Int, Int>?>(replay = 1, extraBufferCapacity = 64)
-    val cacheLoadingProgress: SharedFlow<Pair<Int, Int>?> = _cacheLoadingProgress.asSharedFlow()
-    private val _isRefreshingFlow = MutableStateFlow(false)
-    val isRefreshingFlow: StateFlow<Boolean> = _isRefreshingFlow.asStateFlow()
     private val _refreshEvents = MutableSharedFlow<RefreshEvent>(extraBufferCapacity = 16)
     val refreshEvents: SharedFlow<RefreshEvent> = _refreshEvents.asSharedFlow()
+
+    /**
+     * Single source of truth for the library counter (Phase 1, sole owner
+     * since Phase 4). Every [YouTubeLibraryState.persistedCount] is a
+     * Room-committed count, never an in-memory candidate tally.
+     */
+    private val _libraryState =
+        MutableStateFlow<YouTubeLibraryState>(
+            YouTubeLibraryState.Idle(
+                persistedCount = sharedPreferences.getString(KEY_COUNT, "0")?.toIntOrNull() ?: 0,
+                lastRefreshedAt = sharedPreferences.getLong(KEY_LAST_SEARCH_AT, 0L),
+            ),
+        )
+    val libraryState: StateFlow<YouTubeLibraryState> = _libraryState.asStateFlow()
+
+    /** Marks a category toggle as pending (debounce window). See state docs. */
+    fun noteCategoryPending() {
+        val current =
+            when (val state = _libraryState.value) {
+                is YouTubeLibraryState.Idle -> state.persistedCount
+                is YouTubeLibraryState.CategoryPending -> state.persistedCount
+                is YouTubeLibraryState.Removing -> state.persistedCount
+                is YouTubeLibraryState.Searching -> state.persistedCount
+                is YouTubeLibraryState.Populating -> state.persistedCount
+                is YouTubeLibraryState.BotBlocked -> state.persistedCount
+                is YouTubeLibraryState.Failed -> state.persistedCount
+                is YouTubeLibraryState.Disabled -> state.persistedCount
+            }
+        _libraryState.value = YouTubeLibraryState.CategoryPending(persistedCount = current)
+    }
+
+    private suspend fun setLibraryStateIdle() {
+        val count = cacheDao.countGoodEntries()
+        if (!sharedPreferences.getBoolean(KEY_ENABLED, true)) {
+            _libraryState.value = YouTubeLibraryState.Disabled(persistedCount = count)
+        } else {
+            _libraryState.value =
+                YouTubeLibraryState.Idle(
+                    persistedCount = count,
+                    lastRefreshedAt = sharedPreferences.getLong(KEY_LAST_SEARCH_AT, 0L),
+                )
+        }
+    }
     
     sealed interface RefreshEvent {
         data object AlreadyInProgress : RefreshEvent
@@ -135,9 +180,6 @@ class YouTubeSourceRepository(
             val cooldownMinutes: Long,
         ) : RefreshEvent
     }
-
-    @Volatile
-    private var isRefreshing = false
 
     private val refreshMutex = Mutex()
 
@@ -169,10 +211,10 @@ class YouTubeSourceRepository(
         initializeCategorySnapshotIfNeeded()
         repositoryScope.launch {
             val dbCount = cacheDao.countGoodEntries()
-            _cacheCount.value = dbCount
             sharedPreferences.edit {
                 putString(KEY_COUNT, dbCount.toString())
             }
+            setLibraryStateIdle()
         }
     }
 
@@ -340,9 +382,6 @@ class YouTubeSourceRepository(
                 var countAfterRemoval = 0
 
                 try {
-                    _isRefreshingFlow.value = true
-                    isRefreshing = true
-                    _cacheLoadingProgress.emit(null)
                     // Novelty snapshot BEFORE removal/insertion mutates history.
                     val preDeltaTiers = historyTracker.noveltyTiers()
                     val deltaNovelty = NoveltyState(tier1 = preDeltaTiers.tier1, tier2 = preDeltaTiers.tier2)
@@ -351,8 +390,14 @@ class YouTubeSourceRepository(
 
                     var entriesSnapshot = cacheDao.getAllGood()
                     countAfterRemoval = entriesSnapshot.size
-                    _cacheCount.value = countAfterRemoval
                     sharedPreferences.edit { putString(KEY_COUNT, countAfterRemoval.toString()) }
+                    if (removedCount > 0) {
+                        _libraryState.value =
+                            YouTubeLibraryState.Removing(
+                                persistedCount = countAfterRemoval,
+                                removedCount = removedCount,
+                            )
+                    }
 
                     val currentEnabledList = currentEnabled.toList()
                     val categoryPlan = currentEnabledList.takeIf { it.isNotEmpty() }
@@ -437,12 +482,7 @@ class YouTubeSourceRepository(
                     }
                 } finally {
                     val finalCount = cacheDao.countGoodEntries()
-                    // ORDER MATTERS: Set count FIRST, clear progress, THEN reset isRefreshing LAST
-                    _cacheCount.value = finalCount
                     sharedPreferences.edit { putString(KEY_COUNT, finalCount.toString()) }
-                    _cacheLoadingProgress.emit(null)
-                    isRefreshing = false
-                    _isRefreshingFlow.value = false
                 }
 
                 if (removedCount > 0 || insertedCount > 0) {
@@ -452,6 +492,11 @@ class YouTubeSourceRepository(
                     _refreshEvents.emit(RefreshEvent.BotBlocked(YouTubeThrottling.remainingCooldownMinutes()))
                 }
                 val dbCount = cacheDao.countGoodEntries()
+                _libraryState.value =
+                    YouTubeLibraryState.Idle(
+                        persistedCount = dbCount,
+                        lastRefreshedAt = sharedPreferences.getLong(KEY_LAST_SEARCH_AT, 0L),
+                    )
                 markCategoryStateFresh(dbCount)
                 Log.i(
                     TAG,
@@ -838,8 +883,6 @@ class YouTubeSourceRepository(
             if (YouTubeThrottling.isBlocked()) {
                 throw YouTubeBotBlockedException(YouTubeThrottling.remainingCooldownMinutes())
             }
-            isRefreshing = true
-            _isRefreshingFlow.value = true
             withTimeout(5 * 60 * 1000L) { // 5-minute safety timeout
                 val refreshPlan = buildRefreshPlan()
                 // Snapshot novelty BEFORE persist updates the list below.
@@ -860,6 +903,11 @@ class YouTubeSourceRepository(
                 persistFreshEntries(refreshPlan, entries)
                 val finalEntries = topUpCacheToTargetAfterRefresh(entries, novelty)
                 logNoveltyReport(refreshPlan.cachedAt, preTiers, novelty, finalEntries)
+                _libraryState.value =
+                    YouTubeLibraryState.Idle(
+                        persistedCount = cacheDao.countGoodEntries(),
+                        lastRefreshedAt = sharedPreferences.getLong(KEY_LAST_SEARCH_AT, 0L),
+                    )
                 finalEntries
             }
         } catch (exception: YouTubeBotBlockedException) {
@@ -878,12 +926,7 @@ class YouTubeSourceRepository(
             }
         } finally {
             val finalCount = cacheDao.countGoodEntries()
-            // ORDER MATTERS: Set count FIRST, clear progress, THEN reset isRefreshing LAST
-            _cacheCount.value = finalCount
             sharedPreferences.edit { putString(KEY_COUNT, finalCount.toString()) }
-            _cacheLoadingProgress.emit(null)
-            isRefreshing = false
-            _isRefreshingFlow.value = false
         }
     }
 
@@ -910,9 +953,15 @@ class YouTubeSourceRepository(
     }
 
     private suspend fun searchRefreshCandidates(refreshPlan: RefreshPlan): List<SearchCandidate> {
-        // Searching progress is negative (done,total): the UI renders it as
-        // "Searching… X/Y" instead of a frozen spinner. Silent phases were
-        // reported as stuck refreshes.
+        // Searching progress goes straight into the state flow: the fragment
+        // renders queriesCompleted/queriesTotal as "Searching… X/Y" instead
+        // of a frozen spinner. Silent phases were reported as stuck
+        // refreshes, so the total grows honestly as fallback pools append.
+        _libraryState.value =
+            YouTubeLibraryState.Searching(
+                persistedCount = refreshPlan.existingEntries.size,
+                candidatesFound = 0,
+            )
         Log.i(TAG, "Refresh searching ${refreshPlan.queryPool.size} queries")
         delay(300)
         // Cumulative search counter: fallback pools (long-tail, healthy,
@@ -926,9 +975,13 @@ class YouTubeSourceRepository(
             searchCandidateVideos(
                 queries = refreshPlan.queryPool,
                 onProgress = { completed, _ ->
-                    _cacheLoadingProgress.emit(
-                        Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
-                    )
+                    _libraryState.value =
+                        YouTubeLibraryState.Searching(
+                            persistedCount = refreshPlan.existingEntries.size,
+                            candidatesFound = 0,
+                            queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
+                            queriesTotal = searchTotal,
+                        )
                 },
             )
         searchDone += refreshPlan.queryPool.size
@@ -947,9 +1000,13 @@ class YouTubeSourceRepository(
                 if (completed == 0) {
                     searchTotal += poolSize
                 }
-                _cacheLoadingProgress.emit(
-                    Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
-                )
+                _libraryState.value =
+                    YouTubeLibraryState.Searching(
+                        persistedCount = refreshPlan.existingEntries.size,
+                        candidatesFound = 0,
+                        queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
+                        queriesTotal = searchTotal,
+                    )
             }
         searchDone = searchTotal
         val healthyResults =
@@ -957,9 +1014,13 @@ class YouTubeSourceRepository(
                 if (completed == 0) {
                     searchTotal += poolSize
                 }
-                _cacheLoadingProgress.emit(
-                    Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
-                )
+                _libraryState.value =
+                    YouTubeLibraryState.Searching(
+                        persistedCount = refreshPlan.existingEntries.size,
+                        candidatesFound = 0,
+                        queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
+                        queriesTotal = searchTotal,
+                    )
             }
         searchDone = searchTotal
         val healthyUniqueCount = uniqueCandidateCount(healthyResults)
@@ -979,9 +1040,13 @@ class YouTubeSourceRepository(
                     searchCandidateVideos(
                         queries = supplementalQueries,
                         onProgress = { completed, _ ->
-                            _cacheLoadingProgress.emit(
-                                Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
-                            )
+                            _libraryState.value =
+                                YouTubeLibraryState.Searching(
+                                    persistedCount = refreshPlan.existingEntries.size,
+                                    candidatesFound = 0,
+                                    queriesCompleted = (searchDone + completed).coerceAtMost(searchTotal),
+                                    queriesTotal = searchTotal,
+                                )
                         },
                     )
                 searchDone = searchTotal
@@ -1084,9 +1149,6 @@ class YouTubeSourceRepository(
                 cachedAt = refreshPlan.cachedAt,
                 preferredQuality = refreshPlan.preferredQuality,
                 limit = EAGER_EXTRACTION_BUDGET,
-                publishMinimumCache = refreshPlan.existingEntries.size < COLD_CACHE_SKIP_THRESHOLD,
-                publishProgress = true,
-                initialCount = if (replaceExistingCache) 0 else initialCount,
             )
         if (eagerEntries.isEmpty() && eagerCandidates.isNotEmpty() && YouTubeThrottling.isBlocked()) {
             // The gate dropped mid-refresh after searches already ran:
@@ -1206,6 +1268,8 @@ class YouTubeSourceRepository(
         recordRefreshHistory(uniqueEntries)
         val persistedCount = cacheDao.countGoodEntries()
         markCategoryStateFresh(persistedCount)
+        // The ONLY progress number that may claim persisted videos.
+        _libraryState.value = YouTubeLibraryState.Populating(persistedCount = persistedCount)
         Log.i(
             TAG,
             "Cached YouTube videos for query \"${refreshPlan.query}\" across ${refreshPlan.queryPool.size} searches " +
@@ -1294,6 +1358,8 @@ class YouTubeSourceRepository(
         if (insertedTotal > 0) {
             recordRefreshHistory(finalEntries)
             markCategoryStateFresh(finalEntries.size)
+            // DB-committed count only — never the in-memory insert tally.
+            _libraryState.value = YouTubeLibraryState.Populating(persistedCount = finalEntries.size)
         }
         Timber.tag(TAG).i(
             "Full refresh top-up complete (initial=%s, inserted=%s, final=%s)",
@@ -1594,9 +1660,6 @@ class YouTubeSourceRepository(
         cachedAt: Long,
         preferredQuality: String,
         limit: Int,
-        publishMinimumCache: Boolean,
-        publishProgress: Boolean = true,
-        initialCount: Int = 0,
     ): List<YouTubeCacheEntity> =
         supervisorScope {
             val entries = mutableListOf<YouTubeCacheEntity>()
@@ -1641,13 +1704,6 @@ class YouTubeSourceRepository(
                     }
                     if (toInsert.isNotEmpty()) {
                         entries += toInsert
-                        
-                        if (publishProgress) {
-                            val currentTotal = initialCount + entries.size
-                            _cacheLoadingProgress.emit(
-                                Pair(currentTotal.coerceAtMost(TARGET_CACHE_SIZE), TARGET_CACHE_SIZE)
-                            )
-                        }
                     }
                 }
 
@@ -2115,7 +2171,6 @@ class YouTubeSourceRepository(
     ) {        val rowsMarkedBad = cacheDao.markAsBad(entry.videoId)
         if (rowsMarkedBad > 0) {
             val liveCount = cacheDao.countGoodEntries()
-            _cacheCount.value = liveCount
             sharedPreferences.edit { putString(KEY_COUNT, liveCount.toString()) }
         }
         badCountThisSession += 1
@@ -2514,9 +2569,6 @@ class YouTubeSourceRepository(
                         cachedAt = cachedAt,
                         preferredQuality = preferredQuality(),
                         limit = remainingToInsert,
-                        publishMinimumCache = false,
-                        publishProgress = true,
-                        initialCount = initialCount + insertedTotal,
                     )
                 }
             if (extractedEntries.isEmpty()) {
@@ -2548,20 +2600,15 @@ class YouTubeSourceRepository(
                 insertedTotal += insertedThisAttempt
                 remainingToInsert = (extractionLimit - insertedTotal).coerceAtLeast(0)
                 if (metadataOnly) {
-                    // The eager path reports via extractEntries; metadata-only
-                    // inserts would otherwise leave the counter frozen until
-                    // the whole top-up finishes, then jump to the final total.
-                    val currentTotal = initialCount + insertedTotal
-                    _cacheLoadingProgress.emit(
-                        Pair(currentTotal.coerceAtMost(TARGET_CACHE_SIZE), TARGET_CACHE_SIZE),
-                    )
+                    // Metadata-only inserts commit straight to Room with no
+                    // eager phase, so report the DB-committed count here —
+                    // otherwise the counter freezes until the top-up ends.
+                    _libraryState.value =
+                        YouTubeLibraryState.Populating(persistedCount = afterInsertCount)
                 }
             }
         }
 
-        if (insertedTotal <= 0) {
-            _cacheLoadingProgress.emit(null)
-        }
         return insertedTotal
     }
 
@@ -2647,8 +2694,6 @@ class YouTubeSourceRepository(
         "video_only_preferred"
 
     private fun updateCachedCount(count: Int) {
-        if (isRefreshing) return
-        _cacheCount.value = count
         sharedPreferences.edit {
             putString(KEY_COUNT, count.toString())
         }
@@ -2665,7 +2710,6 @@ class YouTubeSourceRepository(
             putInt(KEY_CACHE_VERSION, CURRENT_CACHE_VERSION)
             putLong(KEY_LAST_SEARCH_AT, System.currentTimeMillis())
         }
-        _cacheCount.value = count
         Timber.tag(TAG).d("Marked YouTube cache fresh: count=%s, signature=\"%s\" categories=\"%s\"", count, appSignature, categorySig)
     }
 

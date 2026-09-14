@@ -312,12 +312,12 @@ internal class YouTubeSourceRepositoryTest {
                     extractor = FakeStreamExtractor(),
                 )
 
-            val searchPairs = mutableListOf<Pair<Int, Int>>()
+            val searchStates = mutableListOf<YouTubeLibraryState.Searching>()
             val collector =
                 backgroundScope.launch {
-                    repository.cacheLoadingProgress.collect { pair ->
-                        if (pair != null && pair.first < 0 && pair.second < 0) {
-                            searchPairs += Pair(-pair.first, -pair.second)
+                    repository.libraryState.collect { state ->
+                        if (state is YouTubeLibraryState.Searching && state.queriesTotal > 0) {
+                            searchStates += state
                         }
                     }
                 }
@@ -328,7 +328,8 @@ internal class YouTubeSourceRepositoryTest {
             runCurrent()
             collector.cancel()
 
-            assertTrue(searchPairs.isNotEmpty(), "Expected search progress emissions")
+            assertTrue(searchStates.isNotEmpty(), "Expected Searching state emissions with query progress")
+            val searchPairs = searchStates.map { Pair(it.queriesCompleted, it.queriesTotal) }
             // Fallbacks must have run: total grows past the 25-query main pool.
             assertTrue(searchPairs.any { it.second > 25 }, "Expected fallback pools to extend the total: $searchPairs")
             // Completed count never goes backwards while searching.
