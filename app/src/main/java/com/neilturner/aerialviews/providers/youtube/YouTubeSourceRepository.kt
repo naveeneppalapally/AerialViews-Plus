@@ -169,6 +169,7 @@ class YouTubeSourceRepository(
      */
     suspend fun previewCategoryRemoval() {
         val preview = categoryManager.previewCategoryRemovalSnapshot()
+        Log.d(TAG, "Removal preview: removed=${preview.removedCount} remaining=${preview.remainingCount}")
         if (preview.removedCount > 0) {
             _libraryState.value =
                 YouTubeLibraryState.Removing(
@@ -393,10 +394,12 @@ class YouTubeSourceRepository(
             val removedCategories = previousEnabled - currentEnabled
             val addedCategories = currentEnabled - previousEnabled
             val removedCategoriesCount = removedCategories.size
+            Log.d(TAG, "Delta start: current=$currentEnabled previous=$previousEnabled removed=$removedCategories added=$addedCategories")
 
             if (removedCategories.isNotEmpty()) {
                 val removedCount = categoryManager.applyCurrentCategoryFilterInternal()
                 val dbCount = cacheDao.countGoodEntries()
+                Log.d(TAG, "Delta removal committed: removedRows=$removedCount dbCount=$dbCount")
                 sharedPreferences.edit { putString(KEY_COUNT, dbCount.toString()) }
                 if (removedCount > 0) {
                     clearPreResolvedEntry()
@@ -877,7 +880,10 @@ class YouTubeSourceRepository(
 
             val refreshedEntries =
                 when {
-                    cachedEntries.isEmpty() -> loadFreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
+                    cachedEntries.isEmpty() -> {
+                        Log.d(TAG, "warmCache: empty cache, full fill")
+                        loadFreshSearchResults(replaceExistingCache = true, skipIfPopulated = true)
+                    }
                     forceSearchRefresh ||
                         isSearchCacheExpired() ||
                         isCacheVersionStale() ||
@@ -1908,6 +1914,7 @@ class YouTubeSourceRepository(
     ) {
         val now = System.currentTimeMillis()
         if (!bypassCooldown && now - lastBackgroundWarmAt.get() < BACKGROUND_REFRESH_COOLDOWN_MS) {
+            Log.d(TAG, "Background warm skipped by cooldown")
             return
         }
 
