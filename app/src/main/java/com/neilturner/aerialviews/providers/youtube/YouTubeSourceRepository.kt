@@ -145,8 +145,7 @@ class YouTubeSourceRepository(
     val libraryState: StateFlow<YouTubeLibraryState> = _libraryState.asStateFlow()
 
     /** Marks a category toggle as pending (debounce window). See state docs. */
-    fun noteCategoryPending() {
-        val current =
+    fun noteCategoryPending() {        val current =
             when (val state = _libraryState.value) {
                 is YouTubeLibraryState.Idle -> state.persistedCount
                 is YouTubeLibraryState.CategoryPending -> state.persistedCount
@@ -158,6 +157,25 @@ class YouTubeSourceRepository(
                 is YouTubeLibraryState.Disabled -> state.persistedCount
             }
         _libraryState.value = YouTubeLibraryState.CategoryPending(persistedCount = current)
+    }
+
+    /**
+     * Instant removal preview for a category toggle. Scans the DB (read-only,
+     * milliseconds) and emits [Removing] with the post-delete remaining count
+     * so the counter drops in the same frame as the tap — no debounce wait.
+     * Changes nothing: no delete, no snapshot write. The debounced
+     * [applyCategoryDeltaRefresh] confirms seconds later with the real
+     * DB-committed count and self-corrects any preview skew.
+     */
+    suspend fun previewCategoryRemoval() {
+        val preview = categoryManager.previewCategoryRemovalSnapshot()
+        if (preview.removedCount > 0) {
+            _libraryState.value =
+                YouTubeLibraryState.Removing(
+                    persistedCount = preview.remainingCount,
+                    removedCount = preview.removedCount,
+                )
+        }
     }
 
     private suspend fun setLibraryStateIdle() {

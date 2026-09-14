@@ -203,12 +203,39 @@ internal class YouTubeLibraryStateTest {
             }
         }
 
+    @Test
+    @DisplayName("Removal preview drops the counter without deleting")
+    fun testRemovalPreviewDropsCounterWithoutDeleting() =
+        runTest {
+            val prefs = freshPrefs()
+            val cacheDao = FakeYouTubeCacheDao(categoryEntries(200))
+            val repository = testRepositoryWithPrefs(cacheDao, prefs)
+            runCurrent()
+            // freshPrefs enables all categories by default; simulate the user
+            // turning animals OFF (snapshot still claims all enabled).
+            prefs.edit().putBoolean(YouTubeSourceRepository.KEY_CATEGORY_ANIMALS, false).commit()
+
+            repository.previewCategoryRemoval()
+
+            val state = repository.libraryState.value
+            assertTrue(state is YouTubeLibraryState.Removing, "Expected Removing preview, saw $state")
+            val removing = state as YouTubeLibraryState.Removing
+            assertTrue(removing.persistedCount < 200, "Preview must show the reduced count, saw ${removing.persistedCount}")
+            assertEquals(200, cacheDao.countGoodEntries(), "Preview must not delete rows")
+        }
+
     private fun testRepository(cacheDao: FakeYouTubeCacheDao): YouTubeSourceRepository =
+        testRepositoryWithPrefs(cacheDao, freshPrefs())
+
+    private fun testRepositoryWithPrefs(
+        cacheDao: FakeYouTubeCacheDao,
+        prefs: InMemorySharedPreferences,
+    ): YouTubeSourceRepository =
         YouTubeSourceRepository(
             context = mockPackageContext(),
             cacheDao = cacheDao,
             watchHistoryDao = FakeYouTubeWatchHistoryDao(),
-            sharedPreferences = freshPrefs(),
+            sharedPreferences = prefs,
             searcher = FakeVideoSearcher(),
             extractor = FakeStreamExtractor(),
         )

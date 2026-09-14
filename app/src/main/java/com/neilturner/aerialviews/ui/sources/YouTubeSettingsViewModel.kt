@@ -86,15 +86,20 @@ class YouTubeSettingsViewModel(
     }
 
     fun onCategoryChanged() {
-        // Honest debounce window: surface CategoryPending immediately so the
-        // UI never reverts to Idle while the toggle waits out the debounce.
+        // Instant feel: CategoryPending draws immediately, then a read-only
+        // preview drops the counter to the post-delete count within
+        // milliseconds — no debounce wait. The debounced delta below confirms
+        // with the real DB-committed count and handles backfill.
         repository.noteCategoryPending()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.previewCategoryRemoval() }
+        }
         backgroundRefreshJob?.cancel()
         backgroundRefreshJob =
             viewModelScope.launch {
-                // Debounce: rapid toggles coalesce into one delta refresh run
-                // against the final prefs state, instead of serializing one
-                // multi-minute backfill per toggle on the refresh mutex.
+                // Short debounce: coalesces double-taps into one delta run
+                // against final prefs. Deletion itself is cheap (instant path
+                // above); this window only delays the confirm + backfill.
                 kotlinx.coroutines.delay(CATEGORY_TOGGLE_DEBOUNCE_MS)
                 try {
                     val result = repository.applyCategoryDeltaRefresh()
@@ -151,6 +156,6 @@ class YouTubeSettingsViewModel(
     }
 
     companion object {
-        private const val CATEGORY_TOGGLE_DEBOUNCE_MS = 1500L
+        private const val CATEGORY_TOGGLE_DEBOUNCE_MS = 350L
     }
 }
