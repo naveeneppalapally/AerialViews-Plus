@@ -67,8 +67,10 @@ class YouTubeSourceRepository(
             pendingManualFullRebuild.set(true)
             _isRefreshingFlow.value = true // Ensure UI sees it's locked
             _refreshEvents.emit(RefreshEvent.AlreadyInProgress)
+            Log.i(TAG, "Manual rebuild queued, another refresh holds the lock")
             return
         }
+        Log.i(TAG, "Manual library rebuild started")
         try {
             isRefreshing = true
             _isRefreshingFlow.value = true
@@ -102,6 +104,7 @@ class YouTubeSourceRepository(
             _cacheLoadingProgress.emit(null)
             isRefreshing = false
             _isRefreshingFlow.value = false
+            Log.i(TAG, "Manual library rebuild finished, count=$finalCount")
             refreshMutex.unlock()
             if (pendingManualFullRebuild.getAndSet(false)) {
                 repositoryScope.launch {
@@ -340,6 +343,9 @@ class YouTubeSourceRepository(
                     _isRefreshingFlow.value = true
                     isRefreshing = true
                     _cacheLoadingProgress.emit(null)
+                    // Novelty snapshot BEFORE removal/insertion mutates history.
+                    val preDeltaTiers = historyTracker.noveltyTiers()
+                    val deltaNovelty = NoveltyState(tier1 = preDeltaTiers.tier1, tier2 = preDeltaTiers.tier2)
 
                     removedCount = categoryManager.applyCurrentCategoryFilterInternal()
 
@@ -410,6 +416,7 @@ class YouTubeSourceRepository(
                                         existingEntries = entriesForBackfill,
                                         initialCount = countAfterRemoval + insertedCount,
                                         extractionLimit = extractionLimitForCategory,
+                                        novelty = deltaNovelty,
                                     )
                                 if (insertedForCategory > 0) {
                                     insertedCount += insertedForCategory
@@ -835,6 +842,9 @@ class YouTubeSourceRepository(
             _isRefreshingFlow.value = true
             withTimeout(5 * 60 * 1000L) { // 5-minute safety timeout
                 val refreshPlan = buildRefreshPlan()
+                // Snapshot novelty BEFORE persist updates the list below.
+                val preTiers = historyTracker.noveltyTiers()
+                val novelty = NoveltyState(tier1 = preTiers.tier1, tier2 = preTiers.tier2)
                 val searchResults = searchRefreshCandidates(refreshPlan)
                 val extractedEntries =
                     extractRefreshEntries(
@@ -842,12 +852,15 @@ class YouTubeSourceRepository(
                         searchResults = searchResults,
                         replaceExistingCache = replaceExistingCache,
                         initialCount = refreshPlan.existingEntries.size,
+                        novelty = novelty,
                     )
                 // (Mid-refresh gate drops are reported distinctly from inside
                 // extractRefreshEntries, which sees the eager/metadata split.)
                 val entries = mergeRefreshedEntries(refreshPlan, extractedEntries, replaceExistingCache)
                 persistFreshEntries(refreshPlan, entries)
-                topUpCacheToTargetAfterRefresh(entries)
+                val finalEntries = topUpCacheToTargetAfterRefresh(entries, novelty)
+                logNoveltyReport(refreshPlan.cachedAt, preTiers, novelty, finalEntries)
+                finalEntries
             }
         } catch (exception: YouTubeBotBlockedException) {
             throw exception
@@ -882,10 +895,10 @@ class YouTubeSourceRepository(
         return RefreshPlan(
             query = searchQuery(),
             queryPool =
-                QueryFormulaEngine.generateQueryPool(
+                QueryFormulaEngine.generateRingQueryPool(
                     count = if (isColdStart) COLD_START_QUERY_POOL_SIZE else QUERY_POOL_SIZE,
-                    entropySeed = cachedAt,
                     prefs = categoryPreferences,
+                    sharedPreferences = sharedPreferences,
                 ),
             preferredQuality = preferredQuality(),
             cachedAt = cachedAt,
@@ -897,13 +910,29 @@ class YouTubeSourceRepository(
     }
 
     private suspend fun searchRefreshCandidates(refreshPlan: RefreshPlan): List<SearchCandidate> {
-        // Emit "Searching" state (negative progress) to separate search from extraction UI
-        _cacheLoadingProgress.emit(Pair(-1, TARGET_CACHE_SIZE))
+        // Searching progress is negative (done,total): the UI renders it as
+        // "Searching… X/Y" instead of a frozen spinner. Silent phases were
+        // reported as stuck refreshes.
+        Log.i(TAG, "Refresh searching ${refreshPlan.queryPool.size} queries")
         delay(300)
+        // Cumulative search counter: fallback pools (long-tail, healthy,
+        // supplemental) run only when yield is low, and each used to run
+        // silent — the UI froze at "25 of 25" for minutes. The total grows
+        // honestly as fallbacks are added, so the count never sits still
+        // while queries run. Targets and pools are untouched.
+        var searchDone = 0
+        var searchTotal = refreshPlan.queryPool.size
         val mainSearchResults =
             searchCandidateVideos(
                 queries = refreshPlan.queryPool,
+                onProgress = { completed, _ ->
+                    _cacheLoadingProgress.emit(
+                        Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
+                    )
+                },
             )
+        searchDone += refreshPlan.queryPool.size
+        Log.i(TAG, "Refresh searched ${refreshPlan.queryPool.size} queries, ${uniqueCandidateCount(mainSearchResults)} unique candidates")
         if (refreshPlan.isColdStart) {
             Timber.tag(TAG).i(
                 "Using fast cold-start YouTube candidate pool (%s queries, %s/%s unique candidates)",
@@ -913,8 +942,26 @@ class YouTubeSourceRepository(
             )
             return mainSearchResults
         }
-        val expandedResults = maybeExpandWithLongTail(mainSearchResults)
-        val healthyResults = ensureHealthyCandidatePool(refreshPlan.query, expandedResults)
+        val expandedResults =
+            maybeExpandWithLongTail(mainSearchResults) { poolSize, completed ->
+                if (completed == 0) {
+                    searchTotal += poolSize
+                }
+                _cacheLoadingProgress.emit(
+                    Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
+                )
+            }
+        searchDone = searchTotal
+        val healthyResults =
+            ensureHealthyCandidatePool(refreshPlan.query, expandedResults) { poolSize, completed ->
+                if (completed == 0) {
+                    searchTotal += poolSize
+                }
+                _cacheLoadingProgress.emit(
+                    Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
+                )
+            }
+        searchDone = searchTotal
         val healthyUniqueCount = uniqueCandidateCount(healthyResults)
         val finalResults =
             if (healthyUniqueCount >= MIN_HEALTHY_CACHE_SIZE) {
@@ -927,7 +974,17 @@ class YouTubeSourceRepository(
                         entropySeed = refreshPlan.entropySeed xor healthyUniqueCount.toLong(),
                         prefs = categoryPreferences(),
                     )
-                val supplementalResults = searchCandidateVideos(supplementalQueries)
+                searchTotal += supplementalQueries.size
+                val supplementalResults =
+                    searchCandidateVideos(
+                        queries = supplementalQueries,
+                        onProgress = { completed, _ ->
+                            _cacheLoadingProgress.emit(
+                                Pair(-(searchDone + completed).coerceAtMost(searchTotal), -searchTotal),
+                            )
+                        },
+                    )
+                searchDone = searchTotal
                 val supplementedResults = mergeCandidatePools(healthyResults, supplementalResults)
                 Timber.tag(TAG).i(
                     "Supplemented YouTube candidate pool with %s queries (%s -> %s unique candidates)",
@@ -949,18 +1006,65 @@ class YouTubeSourceRepository(
         return finalResults
     }
 
+    /**
+     * Single structured line per successful refresh so batch novelty is
+     * measurable on-device: overlap with the previous batch (Tier 1) and the
+     * ~3 before it, how many candidates each tier filtered, which relaxation
+     * pass admitted the final IDs, and per-category quota fulfillment.
+     */
+    private fun logNoveltyReport(
+        batchId: Long,
+        preTiers: NoveltyTiers,
+        novelty: NoveltyState,
+        finalEntries: List<YouTubeCacheEntity>,
+    ) {
+        val finalIds = finalEntries.map { it.videoId }.toSet()
+        val overlapN1 = finalIds.intersect(preTiers.tier1).size
+        val overlapN3 = finalIds.intersect(preTiers.tier1 + preTiers.tier2).size
+        val pass3 = overlapN1
+        val pass2 = (overlapN3 - overlapN1).coerceAtLeast(0)
+        val pass1 = (finalIds.size - overlapN3).coerceAtLeast(0)
+        val targets = categoryManager.allocateCategoryTargets(enabledCategoryKeys(), TARGET_CACHE_SIZE)
+        val counts = categoryManager.computeCategoryCounts(finalEntries, targets.keys)
+        val quotas = targets.map { (key, target) -> "$key=${counts[key] ?: 0}/$target" }.joinToString(",")
+        Log.i(
+            TAG,
+            "[RefreshNoveltyReport] batchId=$batchId total=${finalEntries.size} " +
+                "overlapN1=$overlapN1 overlapN3=$overlapN3 " +
+                "tier1Excluded=${novelty.tier1Excluded} tier2Demoted=${novelty.tier2Demoted} " +
+                "relaxationPasses={pass1=$pass1,pass2=$pass2,pass3=$pass3} quotas={$quotas}",
+        )
+    }
+
     private suspend fun extractRefreshEntries(
         refreshPlan: RefreshPlan,
         searchResults: List<SearchCandidate>,
         replaceExistingCache: Boolean,
         initialCount: Int,
+        novelty: NoveltyState,
     ): List<YouTubeCacheEntity> {
         val filteredCandidates =
             filterCategoryMismatchedCandidates(
                 filterRecentlyPlayedCandidates(searchResults),
             )
+        // Tier-1 hard exclusion: last batch's IDs never compete again
+        // immediately. Emergency valve: if exclusion empties the pool
+        // (starvation), admit everything rather than fail the refresh.
+        val novelCandidates =
+            if (novelty.tier1.isEmpty()) {
+                filteredCandidates
+            } else {
+                val novel = filteredCandidates.filterNot { candidateVideoId(it) in novelty.tier1 }
+                novelty.tier1Excluded += filteredCandidates.size - novel.size
+                if (novel.isEmpty() && filteredCandidates.isNotEmpty()) {
+                    Log.i(TAG, "Novelty emergency valve: Tier-1 exclusion emptied the pool, admitting all")
+                    filteredCandidates
+                } else {
+                    novel
+                }
+            }
         val rankedCandidates =
-            rankCandidatesWithStyleBalance(filteredCandidates)
+            rankCandidatesWithStyleBalance(novelCandidates, novelty)
                 .let(::deduplicateCandidatesByTitle)
                 .let(::deduplicateCandidatesByVideoId)
                 .let { applyCandidateDiversityCaps(it, EXTRACTION_TARGET_SIZE) }
@@ -1112,6 +1216,7 @@ class YouTubeSourceRepository(
 
     private suspend fun topUpCacheToTargetAfterRefresh(
         persistedEntries: List<YouTubeCacheEntity>,
+        novelty: NoveltyState,
     ): List<YouTubeCacheEntity> {
         var entriesSnapshot = deduplicateEntriesByVideoId(persistedEntries)
         var remainingToInsert = (TARGET_CACHE_SIZE - entriesSnapshot.size).coerceAtLeast(0)
@@ -1168,6 +1273,7 @@ class YouTubeSourceRepository(
                         initialCount = cacheDao.countGoodEntries(),
                         extractionLimit = extractionLimitForCategory,
                         metadataOnly = true,
+                        novelty = novelty,
                     )
                 if (insertedForCategory > 0) {
                     insertedTotal += insertedForCategory
@@ -1200,13 +1306,17 @@ class YouTubeSourceRepository(
 
     private suspend fun searchCandidateVideos(
         queries: List<String>,
+        onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null,
     ): List<SearchCandidate> {
         val variantBuckets = linkedMapOf<String, ArrayDeque<SearchCandidate>>()
+        var completed = 0
 
         for (variantChunk in queries.chunked(QUERY_SEARCH_BATCH_SIZE)) {
             searchVariantChunk(variantChunk).forEach { (variant, results) ->
                 addVariantResults(variantBuckets, variant, results)
             }
+            completed += variantChunk.size
+            onProgress?.invoke(completed.coerceAtMost(queries.size), queries.size)
         }
 
         return interleaveVariantResults(variantBuckets).take(TARGET_CANDIDATE_POOL_SIZE)
@@ -1262,6 +1372,7 @@ class YouTubeSourceRepository(
 
     private suspend fun maybeExpandWithLongTail(
         mainSearchResults: List<SearchCandidate>,
+        onSearchProgress: (suspend (poolSize: Int, completed: Int) -> Unit)? = null,
     ): List<SearchCandidate> {
         val uniqueMainResults = uniqueCandidateCount(mainSearchResults)
         if (uniqueMainResults >= MIN_MAIN_SEARCH_UNIQUE_VIDEOS) {
@@ -1275,7 +1386,11 @@ class YouTubeSourceRepository(
                 entropySeed = System.nanoTime() xor uniqueMainResults.toLong(),
                 prefs = categoryPreferences(),
             )
-        val longTailResults = searchCandidateVideos(longTailQueries)
+        onSearchProgress?.invoke(longTailQueries.size, 0)
+        val longTailResults =
+            searchCandidateVideos(longTailQueries) { completed, _ ->
+                onSearchProgress?.invoke(longTailQueries.size, completed)
+            }
         val mergedResults = mergeCandidatePools(mainSearchResults, longTailResults)
         Timber.tag(TAG).i(
             "Expanded YouTube candidate pool with %s category fallback queries (%s -> %s unique candidates)",
@@ -1306,6 +1421,7 @@ class YouTubeSourceRepository(
     private suspend fun ensureHealthyCandidatePool(
         query: String,
         candidates: List<SearchCandidate>,
+        onSearchProgress: (suspend (poolSize: Int, completed: Int) -> Unit)? = null,
     ): List<SearchCandidate> {
         if (candidates.size >= MIN_HEALTHY_CANDIDATE_POOL_SIZE) {
             return candidates
@@ -1318,7 +1434,11 @@ class YouTubeSourceRepository(
                 entropySeed = System.nanoTime(),
                 prefs = categoryPreferences(),
             )
-        val fallbackCandidates = searchCandidateVideos(fallbackQueries)
+        onSearchProgress?.invoke(fallbackQueries.size, 0)
+        val fallbackCandidates =
+            searchCandidateVideos(fallbackQueries) { completed, _ ->
+                onSearchProgress?.invoke(fallbackQueries.size, completed)
+            }
         if (fallbackCandidates.isEmpty()) {
             return candidates
         }
@@ -2307,6 +2427,9 @@ class YouTubeSourceRepository(
         // this the top-up reintroduces the bulk-extraction burst the hybrid
         // budget exists to prevent.
         metadataOnly: Boolean = false,
+        // Novelty snapshot: Tier-1 IDs are excluded from backfill candidates
+        // so top-ups stop re-injecting yesterday's unplayed videos.
+        novelty: NoveltyState? = null,
     ): Int {
         val normalizedCategories =
             categoryKeys.map(String::trim).filter(String::isNotBlank)
@@ -2358,23 +2481,36 @@ class YouTubeSourceRepository(
                     candidate.category?.key in uniqueCategories
                 }
             val rankedCandidates =
-                rankCandidatesWithStyleBalance(filteredCandidates)
+                rankCandidatesWithStyleBalance(filteredCandidates, novelty)
                     .let(::deduplicateCandidatesByTitle)
                     .let(::deduplicateCandidatesByVideoId)
                     .let { applyCandidateDiversityCaps(it, remainingToInsert) }
-            if (rankedCandidates.isEmpty()) {
+            val novelRanked =
+                if (novelty == null || novelty.tier1.isEmpty()) {
+                    rankedCandidates
+                } else {
+                    val novel = rankedCandidates.filterNot { candidateVideoId(it) in novelty.tier1 }
+                    novelty.tier1Excluded += rankedCandidates.size - novel.size
+                    if (novel.isEmpty() && rankedCandidates.isNotEmpty()) {
+                        Log.i(TAG, "Novelty emergency valve in backfill: admitting all candidates")
+                        rankedCandidates
+                    } else {
+                        novel
+                    }
+                }
+            if (novelRanked.isEmpty()) {
                 return@repeat
             }
 
             val extractedEntries =
                 if (metadataOnly) {
                     buildMetadataEntries(
-                        candidates = rankedCandidates.take(remainingToInsert),
+                        candidates = novelRanked.take(remainingToInsert),
                         cachedAt = cachedAt,
                     )
                 } else {
                     extractEntries(
-                        items = rankedCandidates,
+                        items = novelRanked,
                         cachedAt = cachedAt,
                         preferredQuality = preferredQuality(),
                         limit = remainingToInsert,
@@ -2411,6 +2547,15 @@ class YouTubeSourceRepository(
             if (insertedThisAttempt > 0) {
                 insertedTotal += insertedThisAttempt
                 remainingToInsert = (extractionLimit - insertedTotal).coerceAtLeast(0)
+                if (metadataOnly) {
+                    // The eager path reports via extractEntries; metadata-only
+                    // inserts would otherwise leave the counter frozen until
+                    // the whole top-up finishes, then jump to the final total.
+                    val currentTotal = initialCount + insertedTotal
+                    _cacheLoadingProgress.emit(
+                        Pair(currentTotal.coerceAtMost(TARGET_CACHE_SIZE), TARGET_CACHE_SIZE),
+                    )
+                }
             }
         }
 
@@ -2585,12 +2730,15 @@ class YouTubeSourceRepository(
         return selectItemsWithThemeCaps(themeBuckets, limit)
     }
 
-    private fun rankCandidatesWithStyleBalance(candidates: List<SearchCandidate>): List<SearchCandidate> {
+    private fun rankCandidatesWithStyleBalance(
+        candidates: List<SearchCandidate>,
+        novelty: NoveltyState? = null,
+    ): List<SearchCandidate> {
         if (candidates.isEmpty()) {
             return emptyList()
         }
 
-        val scoredCandidates = scoreCandidates(candidates)
+        val scoredCandidates = scoreCandidates(candidates, novelty)
         val balancedSelection = selectBalancedCandidates(scoredCandidates)
         val rankedCandidates = if (balancedSelection.isEmpty()) scoredCandidates else balancedSelection
 
@@ -2647,7 +2795,10 @@ class YouTubeSourceRepository(
             .replace("[^a-z0-9]+".toRegex(), " ")
             .trim()
 
-    private fun scoreVideo(candidate: SearchCandidate): Int {
+    private fun scoreVideo(
+        candidate: SearchCandidate,
+        novelty: NoveltyState? = null,
+    ): Int {
         val item = candidate.item
         val title = item.getName().lowercase()
         val uploaderName = item.getUploaderName().orEmpty()
@@ -2674,8 +2825,23 @@ class YouTubeSourceRepository(
         val penaltyScore =
             (if (categoryManager.isVlogLikeTitle(title)) YouTubeCategoryManager.VLOG_TITLE_PENALTY else 0) +
                 (if (categoryManager.isDigitHeavyChannelName(uploaderName)) YouTubeCategoryManager.DIGIT_HEAVY_CHANNEL_PENALTY else 0)
+        // Tier-2 soft demotion: batches N-2/N-3 yield to fresh candidates but
+        // stay eligible as fallback. Winners score ~8-14, so -8 drops old
+        // winners below viable fresh candidates without burying them as junk.
+        val noveltyPenalty =
+            if (novelty != null && candidateVideoId(candidate) in novelty.tier2) {
+                novelty.tier2Demoted += 1
+                NOVELTY_TIER2_PENALTY
+            } else {
+                0
+            }
 
-        return qualitySignalScore + durationScore + categoryScore - penaltyScore
+        return qualitySignalScore + durationScore + categoryScore - penaltyScore - noveltyPenalty
+    }
+
+    private fun candidateVideoId(candidate: SearchCandidate): String {
+        val url = candidate.item.getUrl().takeIf { it.isNotBlank() } ?: return ""
+        return extractVideoId(url) ?: url
     }
 
     private fun queryCategory(candidate: SearchCandidate): QueryFormulaEngine.QueryCategory =
@@ -2759,9 +2925,12 @@ class YouTubeSourceRepository(
         return selectedItems.take(limit)
     }
 
-    private fun scoreCandidates(candidates: List<SearchCandidate>): List<Pair<SearchCandidate, Int>> =
+    private fun scoreCandidates(
+        candidates: List<SearchCandidate>,
+        novelty: NoveltyState? = null,
+    ): List<Pair<SearchCandidate, Int>> =
         candidates
-            .map { candidate -> candidate to scoreVideo(candidate) }
+            .map { candidate -> candidate to scoreVideo(candidate, novelty) }
             .sortedByDescending { (_, score) -> score }
 
     private fun selectBalancedCandidates(
@@ -2823,6 +2992,20 @@ class YouTubeSourceRepository(
         val searchQuery: String,
         val category: QueryFormulaEngine.ContentCategory?,
     )
+
+    /**
+     * Per-refresh novelty state: Tier-1 IDs (last batch) are hard-excluded
+     * from candidates, Tier-2 IDs (the ~2 batches before) take a score
+     * penalty but stay eligible. Counters feed the novelty report log.
+     */
+    private class NoveltyState(
+        val tier1: Set<String>,
+        val tier2: Set<String>,
+        var tier1Excluded: Int = 0,
+        var tier2Demoted: Int = 0,
+    ) {
+        fun isEmpty(): Boolean = tier1.isEmpty() && tier2.isEmpty()
+    }
 
     companion object {
         private const val TAG = "YouTubeSource"
@@ -2902,6 +3085,10 @@ class YouTubeSourceRepository(
         private const val STREAM_REEXTRACT_BUFFER_MS = 30L * 60L * 1000L
         private const val MAX_PLAYBACK_RESOLVE_ATTEMPTS = 5
         private const val BAD_ENTRY_REFRESH_THRESHOLD = 10
+        // Tier-2 novelty demotion: batches N-2/N-3 yield to fresh candidates
+        // but stay eligible. Winners score ~8-14, so -8 drops old winners
+        // below viable fresh candidates without burying them as junk.
+        private const val NOVELTY_TIER2_PENALTY = 8
         private const val CURRENT_CACHE_VERSION = 29
         internal const val STREAM_SELECTION_STRATEGY_VERSION = 4
         private const val MIN_ACCEPTABLE_CACHED_STREAM_HEIGHT = 720

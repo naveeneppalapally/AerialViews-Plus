@@ -219,6 +219,129 @@ internal class YouTubeSourceRepositoryTest {
         }
 
     @Test
+    @DisplayName("Should exclude last batch IDs from the next batch")
+    fun testTier1ExcludedFromNextBatch() =
+        runTest {
+            val prefs = freshPrefs()
+            val cacheDao = FakeYouTubeCacheDao(mutableListOf())
+            val watchHistoryDao = FakeYouTubeWatchHistoryDao()
+            // Seed novelty memory with a previous batch. Small ID sets keep
+            // the top-up backfill (which re-searches per category) fast.
+            val tier1Ids = (1..12).map { "tier1video$it" }
+            val freshIds = (1..8).map { "freshvideo$it" }
+            YouTubeHistoryTracker(cacheDao, watchHistoryDao, prefs)
+                .recordRefreshHistory(tierEntries(tier1Ids))
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = watchHistoryDao,
+                    sharedPreferences = prefs,
+                    searcher = FixedIdSearcher(tier1Ids + freshIds),
+                    extractor = FakeStreamExtractor(),
+                )
+
+            val entries = repository.refreshSearchResults(replaceExistingCache = true)
+            val resultIds = entries.map { it.videoId }.toSet()
+
+            assertTrue(entries.isNotEmpty(), "Expected fresh videos to fill the batch")
+            assertTrue(
+                resultIds.none { it.startsWith("tier1video") },
+                "Tier-1 IDs must not recur in the next batch",
+            )
+            assertTrue(resultIds.any { it.startsWith("freshvideo") })
+        }
+
+    @Test
+    @DisplayName("Should admit Tier-1 IDs rather than fail when starved")
+    fun testEmergencyValveAdmitsWhenStarved() =
+        runTest {
+            val prefs = freshPrefs()
+            val cacheDao = FakeYouTubeCacheDao(mutableListOf())
+            val watchHistoryDao = FakeYouTubeWatchHistoryDao()
+            val tier1Ids = (1..12).map { "tier1video$it" }
+            YouTubeHistoryTracker(cacheDao, watchHistoryDao, prefs)
+                .recordRefreshHistory(tierEntries(tier1Ids))
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = watchHistoryDao,
+                    sharedPreferences = prefs,
+                    searcher = FixedIdSearcher(tier1Ids),
+                    extractor = FakeStreamExtractor(),
+                )
+
+            val entries = repository.refreshSearchResults(replaceExistingCache = true)
+
+            assertTrue(entries.isNotEmpty(), "Emergency valve must keep the refresh alive")
+            assertTrue(entries.all { it.videoId.startsWith("tier1video") })
+        }
+
+    private fun tierEntries(videoIds: List<String>): List<YouTubeCacheEntity> =
+        videoIds.map { videoId ->
+            YouTubeCacheEntity(
+                videoId = videoId,
+                videoPageUrl = "https://www.youtube.com/watch?v=$videoId",
+                streamUrl = "https://cdn.example.com/$videoId.mp4",
+                title = "Ambient video $videoId",
+                uploaderName = "Channel $videoId",
+                durationSeconds = 600,
+                categoryKey = "nature",
+                streamUrlExpiresAt = System.currentTimeMillis() + 86_400_000L,
+                searchCachedAt = System.currentTimeMillis(),
+                searchQuery = "4K aerial nature ambient",
+            )
+        }
+
+    @Test
+    @DisplayName("Should report cumulative search progress across fallback pools")
+    fun testCumulativeSearchProgressAcrossFallbacks() =
+        runTest {
+            // Seed past cold-start so the full pool pipeline (main + long-tail
+            // + healthy + supplemental fallbacks) runs against a scarce
+            // searcher that always returns the same 2 videos.
+            val cacheDao = FakeYouTubeCacheDao(buildEntries(System.currentTimeMillis()).take(10).toMutableList())
+            val repository =
+                YouTubeSourceRepository(
+                    context = mockPackageContext(),
+                    cacheDao = cacheDao,
+                    watchHistoryDao = FakeYouTubeWatchHistoryDao(),
+                    sharedPreferences = freshPrefs(),
+                    searcher = ScarceVideoSearcher(),
+                    extractor = FakeStreamExtractor(),
+                )
+
+            val searchPairs = mutableListOf<Pair<Int, Int>>()
+            val collector =
+                backgroundScope.launch {
+                    repository.cacheLoadingProgress.collect { pair ->
+                        if (pair != null && pair.first < 0 && pair.second < 0) {
+                            searchPairs += Pair(-pair.first, -pair.second)
+                        }
+                    }
+                }
+            runCurrent()
+
+            repository.refreshSearchResults(replaceExistingCache = true)
+
+            runCurrent()
+            collector.cancel()
+
+            assertTrue(searchPairs.isNotEmpty(), "Expected search progress emissions")
+            // Fallbacks must have run: total grows past the 25-query main pool.
+            assertTrue(searchPairs.any { it.second > 25 }, "Expected fallback pools to extend the total: $searchPairs")
+            // Completed count never goes backwards while searching.
+            searchPairs.zipWithNext { a, b ->
+                assertTrue(b.first >= a.first, "Search progress went backwards: $a -> $b")
+            }
+            // Totals only grow, never shrink mid-refresh.
+            searchPairs.zipWithNext { a, b ->
+                assertTrue(b.second >= a.second, "Search total shrank: $a -> $b")
+            }
+        }
+
+    @Test
     @DisplayName("Should fail fast without searching while bot-blocked")
     fun testRefreshFailsFastWhileBlocked() =
         runTest {
@@ -374,8 +497,7 @@ internal class YouTubeSourceRepositoryTest {
         return context
     }
 
-    private class FakeVideoSearcher : VideoSearcher {
-        private var counter = 0
+        private class FakeVideoSearcher : VideoSearcher {        private var counter = 0
         var searchCalls = 0
             private set
 
@@ -397,6 +519,44 @@ internal class YouTubeSourceRepositoryTest {
                 }
             }
         }
+    }
+
+    private class FixedIdSearcher(
+        private val videoIds: List<String>,
+    ) : VideoSearcher {
+        override suspend fun searchVideos(
+            query: String,
+            category: QueryFormulaEngine.ContentCategory?,
+        ): List<StreamInfoItem> =
+            videoIds.map { videoId ->
+                StreamInfoItem(
+                    0,
+                    "https://www.youtube.com/watch?v=$videoId",
+                    "Ambient video $videoId",
+                    StreamType.VIDEO_STREAM,
+                ).apply {
+                    uploaderName = "Channel $videoId"
+                    setDuration(600L)
+                }
+            }
+    }
+
+    private class ScarceVideoSearcher : VideoSearcher {        // Always the same 2 videos: forces every fallback pool to run.
+        override suspend fun searchVideos(
+            query: String,
+            category: QueryFormulaEngine.ContentCategory?,
+        ): List<StreamInfoItem> =
+            listOf("scarcevideo1", "scarcevideo2").map { videoId ->
+                StreamInfoItem(
+                    0,
+                    "https://www.youtube.com/watch?v=$videoId",
+                    "Ambient forest real footage $videoId",
+                    StreamType.VIDEO_STREAM,
+                ).apply {
+                    uploaderName = "Fake Nature Channel"
+                    setDuration(600L)
+                }
+            }
     }
 
     private class FakeStreamExtractor : StreamExtractor {

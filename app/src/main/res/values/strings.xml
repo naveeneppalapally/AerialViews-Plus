@@ -264,6 +264,7 @@
     <string name="youtube_refresh_failed">Refresh failed. Keeping current library.</string>
     <string name="youtube_refresh_dialog_message">Refreshing YouTube library…</string>
     <string name="youtube_refresh_searching">Searching for videos…</string>
+    <string name="youtube_refresh_searching_progress">Searching for videos… %1$d of %2$d</string>
     <string name="youtube_refresh_already_in_progress_toast">YouTube refresh is already in progress. Your Refresh Now request is queued.</string>
     <string name="youtube_refresh_rate_limited">YouTube is temporarily rate-limiting this network — showing cached videos. Try again in ~%1$d min.</string>
 

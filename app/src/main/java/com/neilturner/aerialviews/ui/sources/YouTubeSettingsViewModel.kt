@@ -200,7 +200,7 @@ class YouTubeSettingsViewModel(
         when {
             !isRefreshing -> YouTubeRefreshStage.IDLE
             progress == null -> YouTubeRefreshStage.FINALIZING
-            progress.first < 0 -> YouTubeRefreshStage.SEARCHING
+            progress.first < 0 || progress.second < 0 -> YouTubeRefreshStage.SEARCHING
             else -> YouTubeRefreshStage.EXTRACTING
         }
 

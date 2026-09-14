@@ -4,6 +4,12 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import java.util.ArrayDeque
 
+/** Pre-refresh novelty snapshot: hard-exclusion set, demotion set. */
+data class NoveltyTiers(
+    val tier1: Set<String>,
+    val tier2: Set<String>,
+)
+
 /**
  * Owns all playback/refresh history: the watch-history table plus the
  * SharedPreferences mirrors (play/theme/recent-refresh histories, last
@@ -26,6 +32,24 @@ class YouTubeHistoryTracker(
     fun themeHistory(): ArrayDeque<String> = readHistory(KEY_THEME_HISTORY)
 
     fun recentRefreshIds(): ArrayDeque<String> = readHistory(KEY_RECENT_REFRESH_IDS)
+
+    /**
+     * Novelty tiers over the recent-refresh FIFO (oldest first): Tier 1 is
+     * the most recent [TIER1_CAP] IDs (roughly the last full batch) and is
+     * hard-excluded from the next batch; Tier 2 is the [TIER2_CAP] before
+     * that and is only score-demoted. Anything older recirculates freely.
+     */
+    fun noveltyTiers(): NoveltyTiers {
+        val ids = recentRefreshIds().toList()
+        val tier1 = ids.takeLast(TIER1_CAP).toSet()
+        val tier2 =
+            if (ids.size > TIER1_CAP) {
+                ids.dropLast(TIER1_CAP).takeLast(TIER2_CAP).toSet()
+            } else {
+                emptySet()
+            }
+        return NoveltyTiers(tier1 = tier1, tier2 = tier2)
+    }
 
     fun recordRefreshHistory(entries: List<YouTubeCacheEntity>) {
         val history = recentRefreshIds()
@@ -129,7 +153,13 @@ class YouTubeHistoryTracker(
         const val KEY_RECENT_REFRESH_IDS = "yt_recent_refresh_ids"
         const val RECENT_PLAYBACK_WINDOW_MS = 7L * 24L * 60L * 60L * 1000L
         const val HISTORY_SEPARATOR = "|"
+        // Novelty memory: Tier 1 (last full batch) is hard-excluded from the
+        // next batch, Tier 2 (the ~2 batches before) is score-demoted, older
+        // IDs recirculate. Stored as one FIFO; over-long legacy lists trim on
+        // the next write.
+        const val TIER1_CAP = 200
+        const val TIER2_CAP = 400
         private const val MAX_WATCH_HISTORY_ROWS = 5_000
-        private const val MAX_RECENT_REFRESH_IDS = 960
+        private const val MAX_RECENT_REFRESH_IDS = TIER1_CAP + TIER2_CAP
     }
 }

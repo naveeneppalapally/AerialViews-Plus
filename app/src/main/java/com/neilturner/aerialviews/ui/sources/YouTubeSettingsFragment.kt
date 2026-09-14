@@ -18,9 +18,6 @@ import com.neilturner.aerialviews.providers.youtube.YouTubeFeature
 import com.neilturner.aerialviews.providers.youtube.YouTubeSourceRepository
 
 import com.neilturner.aerialviews.services.Display
-import com.neilturner.aerialviews.services.supportsUltraHdOutput
-import com.neilturner.aerialviews.services.supports1440pOutput
-import com.neilturner.aerialviews.ui.helpers.DeviceHelper
 import com.neilturner.aerialviews.ui.helpers.DialogHelper
 import com.neilturner.aerialviews.ui.controls.MenuStateFragment
 import com.neilturner.aerialviews.ui.helpers.ToastHelper
@@ -266,24 +263,30 @@ class YouTubeSettingsFragment : MenuStateFragment() {
 
     private fun configureQualityPreference() {
         val qualityPreference = findPreference<ListPreference>("yt_quality") ?: return
-        val isTv = DeviceHelper.isTV(requireContext()) && !DeviceHelper.isEmulator()
-        val display =
-            if (isTv) {
-                null
-            } else {
-                runCatching { Display.get(requireContext()) }.getOrNull()
-            }
-        val supportsUltraHd =
-            isTv || display?.let { runCatching { it.supportsUltraHdOutput() }.getOrDefault(false) } ?: false
-        val supports1440p =
-            display?.let { runCatching { it.supports1440pOutput() }.getOrDefault(false) } ?: false
+        // Cap the offered list by the real panel height, not the form factor:
+        // treating every TV as 4K-capable showed 4K/1440p on 720p panels where
+        // picking them only stalls (chip must fetch ~15-20 Mbps and decode 4x
+        // the pixels for a screen that can't show them). Picking logic and
+        // defaults are untouched — this only hides unplayable options.
+        val panelHeight =
+            runCatching { Display.get(requireContext()) }
+                .mapCatching { display ->
+                    (
+                        display.supportedModes.map { it.height } +
+                            listOfNotNull(
+                                display.physicalOutput?.height,
+                                display.renderOutput.height,
+                            )
+                    ).maxOrNull() ?: 0
+                }.getOrDefault(0)
+        Log.d(TAG, "Quality list capped by panel height: ${panelHeight}p")
 
         when {
-            supportsUltraHd -> {
+            panelHeight >= 2160 -> {
                 qualityPreference.setEntries(R.array.youtube_quality_entries_uhd)
                 qualityPreference.setEntryValues(R.array.youtube_quality_values_uhd)
             }
-            supports1440p -> {
+            panelHeight >= 1440 -> {
                 qualityPreference.setEntries(R.array.youtube_quality_entries)
                 qualityPreference.setEntryValues(R.array.youtube_quality_values)
             }
@@ -403,6 +406,12 @@ class YouTubeSettingsFragment : MenuStateFragment() {
                     progressCount >= 0 && state.stage != YouTubeRefreshStage.IDLE
                 }
         val targetCount = state.progress?.total
+        // Searching progress rides negative (done,total) so the stage stays
+        // SEARCHING while the count visibly advances per query chunk.
+        val searchProgress =
+            state.progress
+                ?.takeIf { state.stage == YouTubeRefreshStage.SEARCHING && it.current < 0 && it.total < 0 }
+                ?.let { Pair(-it.current, -it.total) }
         val effectiveStaticCount =
             when {
                 state.isRefreshing && liveCount == null -> null
@@ -414,6 +423,7 @@ class YouTubeSettingsFragment : MenuStateFragment() {
             cachedCount = counterValueForSummary,
             stage = state.stage,
             targetCount = targetCount ?: YOUTUBE_LIBRARY_TARGET_COUNT,
+            searchProgress = searchProgress,
         )
     }
 
@@ -500,10 +510,17 @@ class YouTubeSettingsFragment : MenuStateFragment() {
         stage: YouTubeRefreshStage,
         targetCount: Int = YOUTUBE_LIBRARY_TARGET_COUNT,
         emptyHint: String? = null,
+        searchProgress: Pair<Int, Int>? = null,
     ) {
         val cacheCountPreference = findPreference<Preference>(PREFERENCE_CACHE_COUNT) ?: return
         cacheCountPreference.summary =
             when {
+                stage == YouTubeRefreshStage.SEARCHING && searchProgress != null ->
+                    getString(
+                        R.string.youtube_refresh_searching_progress,
+                        searchProgress.first.coerceAtMost(searchProgress.second),
+                        searchProgress.second,
+                    )
                 stage == YouTubeRefreshStage.SEARCHING -> getString(R.string.youtube_refresh_searching)
                 stage != YouTubeRefreshStage.IDLE &&
                     cachedCount != null &&

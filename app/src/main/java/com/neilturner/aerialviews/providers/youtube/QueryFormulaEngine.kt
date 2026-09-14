@@ -1,5 +1,7 @@
 package com.neilturner.aerialviews.providers.youtube
 
+import android.content.SharedPreferences
+import androidx.core.content.edit
 import java.util.Calendar
 import java.util.ArrayDeque
 import kotlin.random.Random
@@ -7,6 +9,7 @@ import timber.log.Timber
 
 object QueryFormulaEngine {
     private const val TAG = "YouTubeQueries"
+    private const val QUERY_CURSOR_PREFIX = "yt_query_cursor_"
 
     enum class QueryCategory {
         AERIAL,
@@ -62,6 +65,29 @@ object QueryFormulaEngine {
         val preferredTitleKeywords: Set<String> = emptySet(),
         val uploaderKeywords: Set<String> = emptySet(),
     )
+
+    /**
+     * Anchored combinatorial queries: subject x anchor x constraint, prefixed
+     * with 4k. Subject cycles fastest so consecutive ring draws differ in
+     * subject, maximizing spread across refreshes. Every component is bounded
+     * ambient vocabulary, so combinations cannot drift off-topic.
+     */
+    private fun buildMatrixQueries(
+        subjects: List<String>,
+        anchors: List<String>,
+        constraints: List<String>,
+    ): List<String> {
+        if (subjects.isEmpty() || anchors.isEmpty() || constraints.isEmpty()) {
+            return emptyList()
+        }
+        val total = subjects.size * anchors.size * constraints.size
+        return List(total) { index ->
+            val subject = subjects[index % subjects.size]
+            val anchor = anchors[(index / subjects.size) % anchors.size]
+            val constraint = constraints[(index / (subjects.size * anchors.size)) % constraints.size]
+            "4k $subject $anchor $constraint"
+        }
+    }
 
     val aiVideoBlacklist =
         listOf(
@@ -179,27 +205,31 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k forest trail real footage no talking",
-                            "4k mountain valley landscape timelapse",
-                            "4k river gorge landscape no music",
-                            "4k national park landscape documentary",
-                            "4k waterfall forest real footage",
-                            "4k canyon landscape nature film",
-                            "4k countryside meadow landscape 4k",
-                            "4k alpine valley landscape no talking",
-                            "4k jungle rainforest ambient",
-                            "4k mangrove forest river",
-                            "4k desert landscape sunset",
-                            "4k volcanic landscape iceland",
-                            "4k canyon landscape usa",
-                            "4k rice terrace asia landscape",
-                            "4k cherry blossom japan ambient",
-                            "4k autumn fall foliage timelapse",
-                            "4k lavender field france scenic",
-                            "4k vineyard landscape timelapse",
-                            "4k glacier landscape timelapse",
-                            "4k hot spring yellowstone",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "forest landscape",
+                                    "mountain valley",
+                                    "river gorge",
+                                    "waterfall",
+                                    "alpine meadow",
+                                    "canyon"
+                                ),
+                            anchors =
+                                listOf(
+                                    "pacific northwest",
+                                    "swiss alps",
+                                    "rocky mountains",
+                                    "iceland",
+                                    "patagonia"
+                                ),
+                            constraints =
+                                listOf(
+                                    "real footage no talking",
+                                    "timelapse no music",
+                                    "documentary 4k",
+                                    "cinematic landscape"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -228,27 +258,30 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k wildlife documentary no talking",
-                            "4k safari wildlife real footage",
-                            "4k birds wildlife documentary 4k",
-                            "4k whale documentary real footage",
-                            "4k elephant wildlife documentary",
-                            "4k deer forest wildlife footage",
-                            "4k marine wildlife documentary 4k",
-                            "4k national geographic wildlife 4k",
-                            "4k savanna wildlife timelapse",
-                            "4k tundra arctic wildlife",
-                            "4k wetlands birds wildlife",
-                            "4k grassland plains wildlife",
-                            "4k arctic fox wildlife documentary",
-                            "4k rainforest wildlife birds monkeys",
-                            "4k mountain goats alpine wildlife",
-                            "4k dolphins whales ocean wildlife",
-                            "4k lion pride savanna wildlife",
-                            "4k polar bear arctic documentary",
-                            "4k jungle wildlife real footage no talking",
-                            "4k birds of paradise rainforest documentary",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "safari wildlife",
+                                    "birds documentary",
+                                    "marine life",
+                                    "arctic animals",
+                                    "forest wildlife"
+                                ),
+                            anchors =
+                                listOf(
+                                    "elephants lions",
+                                    "whales dolphins",
+                                    "penguins seals",
+                                    "deer bears",
+                                    "savanna plains"
+                                ),
+                            constraints =
+                                listOf(
+                                    "real footage no talking",
+                                    "national geographic 4k",
+                                    "documentary 4k",
+                                    "cinematic wildlife"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -280,25 +313,31 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.AERIAL,
                     queries =
-                        listOf(
-                            "4k drone aerial landscape no music",
-                            "4k aerial nature cinematic no talking",
-                            "4k drone flyover mountains 4k",
-                            "4k fpv drone landscape real footage",
-                            "4k aerial coastline cinematic no music",
-                            "4k drone fjord cinematic real footage",
-                            "4k aerial waterfall drone 4k",
-                            "4k bird's eye landscape drone footage",
-                            "4k estuary river delta aerial",
-                            "4k drone norway fjords aerial no music",
-                            "4k drone iceland waterfalls aerial footage",
-                            "4k drone swiss alps flyover cinematic",
-                            "4k drone desert dunes aerial timelapse",
-                            "4k drone rice terraces bali aerial",
-                            "4k drone autumn forest aerial 4k",
-                            "4k drone winter mountains aerial no talking",
-                            "4k drone coastline cliffs aerial cinematic",
-                            "4k fpv canyon flythrough real footage",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "drone landscape",
+                                    "aerial coastline",
+                                    "fpv flyover",
+                                    "bird's eye view",
+                                    "drone fjord",
+                                    "mountain flyover"
+                                ),
+                            anchors =
+                                listOf(
+                                    "norway",
+                                    "iceland",
+                                    "switzerland",
+                                    "hawaii",
+                                    "dolomites"
+                                ),
+                            constraints =
+                                listOf(
+                                    "4k no music",
+                                    "cinematic 4k",
+                                    "real footage",
+                                    "slow flyover"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -324,27 +363,30 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k ocean waves real footage no music",
-                            "4k underwater coral reef documentary",
-                            "4k sea cliffs coastline waves 4k",
-                            "4k beach waves real footage ambient",
-                            "4k deep ocean documentary 4k",
-                            "4k underwater marine life 4k",
-                            "4k coral reef underwater real footage",
-                            "4k coast waves sunset real footage",
-                            "4k tropical beach ambient",
-                            "4k mediterranean coast scenic",
-                            "4k sea cliff coastal waves",
-                            "4k arctic ocean icebergs documentary",
-                            "4k pacific ocean sunset waves no music",
-                            "4k atlantic coastline storm waves 4k",
-                            "4k underwater kelp forest marine life",
-                            "4k tropical lagoon clear water aerial",
-                            "4k island coastline drone ocean 4k",
-                            "4k sea caves coastal waves ambient",
-                            "4k tide pools marine life documentary",
-                            "4k fjord ocean inlet scenic footage",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "ocean waves",
+                                    "coral reef underwater",
+                                    "sea cliffs coastline",
+                                    "beach waves sunset",
+                                    "deep sea ocean",
+                                    "kelp forest"
+                                ),
+                            anchors =
+                                listOf(
+                                    "pacific ocean",
+                                    "caribbean",
+                                    "mediterranean",
+                                    "atlantic coast"
+                                ),
+                            constraints =
+                                listOf(
+                                    "real footage no music",
+                                    "ambient 4k",
+                                    "documentary 4k",
+                                    "relaxing real footage"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -373,24 +415,29 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k earth from space nasa timelapse",
-                            "4k iss earth view real footage",
-                            "4k milky way night sky timelapse",
-                            "4k aurora borealis real timelapse",
-                            "4k northern lights timelapse no music",
-                            "4k nasa earth horizon space station",
-                            "4k moonrise night sky real footage",
-                            "4k stars night sky timelapse 4k",
-                            "4k earth timelapse from iss no music",
-                            "4k moon surface orbit footage",
-                            "4k deep space nebula timelapse",
-                            "4k star trails night sky desert",
-                            "4k aurora iceland night sky timelapse",
-                            "4k milky way over mountains real footage",
-                            "4k satellite earth cloud patterns",
-                            "4k northern lights norway real footage",
-                            "4k aurora alaska winter sky",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "earth from space",
+                                    "iss earth view",
+                                    "milky way night sky",
+                                    "aurora borealis",
+                                    "moon surface orbit",
+                                    "deep space nebula"
+                                ),
+                            anchors =
+                                listOf(
+                                    "nasa",
+                                    "international space station",
+                                    "satellite timelapse",
+                                    "hubble james webb"
+                                ),
+                            constraints =
+                                listOf(
+                                    "timelapse no music",
+                                    "real footage 4k",
+                                    "cinematic 4k"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -421,24 +468,36 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k city skyline timelapse no music",
-                            "4k downtown skyline blue hour timelapse",
-                            "4k city lights night timelapse 4k",
-                            "4k urban architecture no talking",
-                            "4k modern city skyline real footage",
-                            "4k metropolis night skyline 4k",
-                            "4k urban street architecture timelapse",
-                            "4k rooftop skyline sunset city 4k",
-                            "4k tokyo skyline night timelapse",
-                            "4k new york skyline sunset timelapse",
-                            "4k dubai skyline aerial cityscape",
-                            "4k paris city lights timelapse",
-                            "4k london architecture skyline 4k",
-                            "4k singapore marina skyline night",
-                            "4k hong kong harbor skyline timelapse",
-                            "4k urban skyline rain night 4k",
-                            "4k chicago skyline lakefront timelapse",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "city skyline",
+                                    "downtown cityscape",
+                                    "urban architecture",
+                                    "city lights night",
+                                    "waterfront skyline",
+                                    "rooftop sunset"
+                                ),
+                            anchors =
+                                listOf(
+                                    "tokyo",
+                                    "new york",
+                                    "singapore",
+                                    "chicago",
+                                    "hong kong",
+                                    "dubai",
+                                    "london",
+                                    "paris",
+                                    "seattle",
+                                    "sydney",
+                                    "san francisco",
+                                    "shanghai"
+                                ),
+                            constraints =
+                                listOf(
+                                    "timelapse no music",
+                                    "4k real footage"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -468,24 +527,29 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k thunderstorm landscape timelapse",
-                            "4k storm clouds timelapse real footage",
-                            "4k lightning storm real footage",
-                            "4k rain over mountains timelapse",
-                            "4k fog rolling through valley 4k",
-                            "4k misty forest weather timelapse",
-                            "4k storm front clouds 4k timelapse",
-                            "4k heavy rain landscape real footage",
-                            "4k monsoon rain forest ambience",
-                            "4k blizzard snow storm landscape",
-                            "4k dramatic clouds over ocean timelapse",
-                            "4k sunrise fog valley timelapse",
-                            "4k lightning over city skyline",
-                            "4k desert dust storm timelapse",
-                            "4k rainbow after storm landscape",
-                            "4k hurricane ocean clouds timelapse",
-                            "4k rolling thunderstorm plains timelapse",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "thunderstorm lightning",
+                                    "storm clouds",
+                                    "fog rolling valley",
+                                    "heavy rain landscape",
+                                    "dramatic storm front"
+                                ),
+                            anchors =
+                                listOf(
+                                    "over mountains",
+                                    "over ocean",
+                                    "over plains",
+                                    "desert sunrise"
+                                ),
+                            constraints =
+                                listOf(
+                                    "timelapse 4k",
+                                    "real footage no music",
+                                    "ambient sound",
+                                    "nature documentary"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -512,24 +576,29 @@ object QueryFormulaEngine {
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
                     queries =
-                        listOf(
-                            "4k winter forest snow landscape",
-                            "4k arctic landscape timelapse no music",
-                            "4k frozen lake winter real footage",
-                            "4k snowfall landscape 4k",
-                            "4k glacier winter documentary",
-                            "4k polar snow landscape no talking",
-                            "4k snowy mountain valley 4k",
-                            "4k ice landscape arctic real footage",
-                            "4k snow covered pine forest no music",
-                            "4k iceland winter landscape documentary",
-                            "4k frozen waterfall winter 4k",
-                            "4k snowy tundra ambient footage",
-                            "4k alpine village winter snow",
-                            "4k northern forest snowfall timelapse",
-                            "4k sea ice arctic landscape",
-                            "4k winter sunrise mountains timelapse",
-                            "4k blizzard mountain pass real footage",
+                        buildMatrixQueries(
+                            subjects =
+                                listOf(
+                                    "winter forest snow",
+                                    "frozen lake ice",
+                                    "snowfall landscape",
+                                    "glacier icebergs",
+                                    "snowy mountain valley"
+                                ),
+                            anchors =
+                                listOf(
+                                    "arctic",
+                                    "alps",
+                                    "norway",
+                                    "iceland"
+                                ),
+                            constraints =
+                                listOf(
+                                    "4k no music",
+                                    "real footage",
+                                    "documentary 4k",
+                                    "ambient 4k"
+                                ),
                         ),
                     titleKeywords =
                         setOf(
@@ -588,8 +657,7 @@ object QueryFormulaEngine {
         count: Int,
         prefs: CategoryPreferences,
         entropySeed: Long = 0L,
-    ): List<String> {
-        val enabledPools =
+    ): List<String> {        val enabledPools =
             categoryConfigs
                 .filterKeys(prefs::isEnabled)
                 .ifEmpty { defaultPools() }
@@ -613,6 +681,85 @@ object QueryFormulaEngine {
                 .take(count)
         Timber.tag(TAG).d("Generated %s YouTube search variants across %s categories", finalPool.size, enabledPools.size)
         return finalPool
+    }
+
+    /**
+     * Main-pool query selection with persistent per-category ring cursors.
+     * Random shuffles re-dealt overlapping hands every refresh (small pools,
+     * ~3 draws each: ~46% per-category collision); sequential ring slices
+     * guarantee zero query repetition until a category's pool wraps. Cursors
+     * survive process death and category toggles (modulo pool size).
+     * Fallback/delta pools keep random selection — only the main pool needs
+     * the strict guarantee.
+     */
+    fun generateRingQueryPool(
+        count: Int,
+        prefs: CategoryPreferences,
+        sharedPreferences: SharedPreferences,
+    ): List<String> {
+        val enabledPools =
+            categoryConfigs
+                .filterKeys(prefs::isEnabled)
+                .ifEmpty { defaultPools() }
+
+        val selected = mutableListOf<String>()
+        val cursors =
+            enabledPools.mapValues { (category, config) ->
+                readQueryCursor(sharedPreferences, category.key, config.queries.size)
+            }.toMutableMap()
+
+        while (selected.size < count) {
+            var advanced = false
+            for (category in ContentCategory.entries) {
+                val config = enabledPools[category] ?: continue
+                if (selected.size >= count || config.queries.isEmpty()) {
+                    continue
+                }
+                val cursor = cursors.getValue(category) % config.queries.size
+                selected += config.queries[cursor]
+                cursors[category] = (cursor + 1) % config.queries.size
+                advanced = true
+            }
+            if (!advanced) {
+                break
+            }
+        }
+
+        cursors.forEach { (category, cursor) ->
+            writeQueryCursor(sharedPreferences, category.key, cursor)
+        }
+
+        val expandedQueries = expandQueriesForNarrowCategorySelection(selected.distinct(), count)
+        val finalPool =
+            expandedQueries
+                .ifEmpty { SAFE_FALLBACK_QUERIES.take(count) }
+                .map(::sanitizeQueryForAmbientPlayback)
+                .distinct()
+                .take(count)
+        Timber.tag(TAG).d("Generated %s ring YouTube search variants across %s categories", finalPool.size, enabledPools.size)
+        return finalPool
+    }
+
+    private fun queryCursorKey(categoryKey: String): String = "$QUERY_CURSOR_PREFIX$categoryKey"
+
+    private fun readQueryCursor(
+        sharedPreferences: SharedPreferences,
+        categoryKey: String,
+        poolSize: Int,
+    ): Int {
+        if (poolSize <= 0) {
+            return 0
+        }
+        val stored = sharedPreferences.getInt(queryCursorKey(categoryKey), 0)
+        return ((stored % poolSize) + poolSize) % poolSize
+    }
+
+    private fun writeQueryCursor(
+        sharedPreferences: SharedPreferences,
+        categoryKey: String,
+        cursor: Int,
+    ) {
+        sharedPreferences.edit { putInt(queryCursorKey(categoryKey), cursor) }
     }
 
     fun generateFallbackQueryPool(
