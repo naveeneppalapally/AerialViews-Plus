@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- C4 art panel: cinematic gradient behind the version numeral. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="200"
+        android:endColor="#05070C"
+        android:centerColor="#182236"
+        android:startColor="#31435F"
+        android:type="linear" />
+</shape>

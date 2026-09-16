@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Option C4: art panel + progress-ready dialog. Left art panel carries the
+    version (gradient, giant thin numeral); right side holds release notes;
+    footer owns a determinate progress bar so the download phase needs no
+    second dialog. Redundant pills from the old layout are gone; version is
+    shown once as current → new. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -15,55 +20,38 @@
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="42"
-            android:background="@drawable/update_prompt_left_panel_background"
+            android:layout_weight="40"
+            android:background="@drawable/update_prompt_art_background"
+            android:gravity="bottom"
             android:orientation="vertical"
             android:padding="32dp">
-
-            <TextView
-                android:id="@+id/update_prompt_badge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/update_prompt_badge_background"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.06"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="6dp"
-                android:textAllCaps="true"
-                android:textColor="@color/update_prompt_text_accent"
-                android:textSize="10sp" />
 
             <TextView
                 android:id="@+id/update_prompt_app_name"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="26dp"
-                android:fontFamily="sans-serif-light"
-                android:textColor="@color/update_prompt_text_primary"
-                android:textSize="26sp" />
+                android:fontFamily="sans-serif"
+                android:letterSpacing="0.06"
+                android:textAllCaps="true"
+                android:textColor="@color/update_prompt_text_secondary"
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/update_prompt_version"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-light"
-                android:textColor="@color/update_prompt_text_accent"
-                android:textSize="44sp" />
+                android:fontFamily="sans-serif-thin"
+                android:textColor="@color/update_prompt_text_primary"
+                android:textSize="64sp" />
 
             <TextView
                 android:id="@+id/update_prompt_summary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="6dp"
                 android:fontFamily="sans-serif-light"
-                android:lineSpacingExtra="4dp"
                 android:textColor="@color/update_prompt_text_secondary"
-                android:textSize="13sp" />
-
-            <Space
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
+                android:textSize="12sp" />
 
         </LinearLayout>
 
@@ -75,7 +63,7 @@
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="58"
+            android:layout_weight="60"
             android:orientation="vertical"
             android:padding="32dp">
 
@@ -93,7 +81,7 @@
                     android:fontFamily="sans-serif-medium"
                     android:letterSpacing="0.08"
                     android:textAllCaps="true"
-                    android:textColor="@color/update_prompt_text_accent"
+                    android:textColor="@color/update_prompt_text_primary"
                     android:textSize="12sp" />
 
                 <TextView
@@ -134,6 +122,35 @@
                     android:textSize="14sp" />
 
             </androidx.core.widget.NestedScrollView>
+
+            <!-- Download progress: hidden until a download starts, so the
+                downloading phase lives in this dialog instead of a toast. -->
+            <LinearLayout
+                android:id="@+id/update_prompt_progress_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/update_prompt_progress_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif"
+                    android:textColor="@color/update_prompt_text_secondary"
+                    android:textSize="12sp" />
+
+                <ProgressBar
+                    android:id="@+id/update_prompt_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="100"
+                    android:progress="0" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
@@ -176,24 +193,6 @@
             android:textAllCaps="false"
             android:textColor="@color/update_prompt_text_primary"
             android:textSize="14sp" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <TextView
-            android:id="@+id/update_prompt_version_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/update_prompt_badge_background"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.06"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="8dp"
-            android:textAllCaps="true"
-            android:textColor="@color/update_prompt_text_accent"
-            android:textSize="10sp" />
 
     </LinearLayout>
 

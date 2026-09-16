@@ -18,13 +18,19 @@ import com.neilturner.aerialviews.BuildConfig
 import com.neilturner.aerialviews.R
 import com.neilturner.aerialviews.databinding.MainActivityBinding
 import com.neilturner.aerialviews.models.prefs.GeneralPrefs
+import com.neilturner.aerialviews.models.prefs.UpdatePrefs
 import com.neilturner.aerialviews.ui.helpers.PreferenceHelper
 import com.neilturner.aerialviews.ui.screensaver.TestActivity
 import com.neilturner.aerialviews.ui.settings.ImportExportFragment
 import com.neilturner.aerialviews.utils.FirebaseHelper
 import com.neilturner.aerialviews.ui.helpers.ToastHelper
+import com.neilturner.aerialviews.utils.HomeUpdatePromptHelper
 import com.neilturner.aerialviews.utils.UpdateCheckerHelper
 import com.neilturner.aerialviews.utils.UpdateInfo
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -37,6 +43,8 @@ class MainActivity :
     private var updateDownloadId: Long = -1L
     private var startupUpdatePromptHandled = false
     private var isDownloadReceiverRegistered = false
+    private var bannerDismissJob: Job? = null
+    private var downloadProgressJob: Job? = null
 
     private val downloadReceiver =
         object : BroadcastReceiver() {
@@ -174,6 +182,144 @@ class MainActivity :
         }
     }
 
+    /**
+     * Option B ambient banner: non-modal, bottom-right, auto-dismisses after
+     * [UPDATE_BANNER_TIMEOUT_MS] without writing the dismissed tag (an
+     * untouched banner re-appears next launch). Details opens the C4 dialog.
+     */
+    fun showUpdateBanner(updateInfo: UpdateInfo) {
+        val slot = binding.updateBannerSlot
+        slot.removeAllViews()
+        val banner =
+            layoutInflater.inflate(
+                com.neilturner.aerialviews.R.layout.update_banner,
+                slot,
+                false,
+            )
+        banner.findViewById<android.widget.TextView>(
+            com.neilturner.aerialviews.R.id.update_banner_title,
+        ).text =
+            getString(
+                R.string.home_update_banner_title,
+                updateInfo.tagName.removePrefix("v"),
+            )
+        banner.findViewById<android.widget.TextView>(
+            com.neilturner.aerialviews.R.id.update_banner_subtitle,
+        ).text = getString(R.string.home_update_banner_subtitle)
+        banner.findViewById<android.widget.Button>(
+            com.neilturner.aerialviews.R.id.update_banner_details,
+        ).apply {
+            text = getString(R.string.home_update_details)
+            setOnClickListener {
+                dismissUpdateBanner()
+                openUpdateDetails(updateInfo)
+            }
+        }
+        banner.findViewById<android.widget.Button>(
+            com.neilturner.aerialviews.R.id.update_banner_dismiss,
+        ).apply {
+            text = getString(R.string.home_update_dismiss)
+            setOnClickListener {
+                UpdatePrefs.homeUpdatePromptDismissedTag = updateInfo.tagName
+                dismissUpdateBanner()
+            }
+        }
+        slot.addView(banner)
+        slot.visibility = android.view.View.VISIBLE
+        // Deliberately no requestFocus(): the banner must never steal
+        // d-pad focus from whatever the user is doing.
+        bannerDismissJob?.cancel()
+        bannerDismissJob =
+            lifecycleScope.launch {
+                delay(UPDATE_BANNER_TIMEOUT_MS)
+                dismissUpdateBanner()
+            }
+    }
+
+    fun openUpdateDetails(updateInfo: UpdateInfo) {
+        HomeUpdatePromptHelper.show(
+            context = this,
+            currentVersion = com.neilturner.aerialviews.BuildConfig.VERSION_NAME,
+            updateInfo = updateInfo,
+            onDownload = { handle ->
+                UpdatePrefs.homeUpdatePromptDismissedTag = ""
+                val downloadId =
+                    runCatching {
+                        UpdateCheckerHelper.enqueueDownload(this, updateInfo)
+                    }.getOrElse { exception ->
+                        Timber.e(exception, "UpdateChecker: failed to enqueue home-screen update download")
+                        handle.showFailed()
+                        lifecycleScope.launch {
+                            ToastHelper.show(this@MainActivity, R.string.home_update_download_failed)
+                        }
+                        return@show
+                    }
+                updateDownloadId = downloadId
+                handle.showDownloading()
+                downloadProgressJob?.cancel()
+                downloadProgressJob =
+                    lifecycleScope.launch {
+                        pollDownloadProgress(downloadId, handle)
+                    }
+                handle.dialog.setOnDismissListener {
+                    downloadProgressJob?.cancel()
+                }
+            },
+            onLater = {
+                UpdatePrefs.homeUpdatePromptDismissedTag = updateInfo.tagName
+            },
+        )
+    }
+
+    private suspend fun pollDownloadProgress(
+        downloadId: Long,
+        handle: HomeUpdatePromptHelper.UpdateDialogHandle,
+    ) {
+        val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            val (status, downloaded, total) =
+                runCatching {
+                    downloadManager.query(query)?.use { cursor ->
+                        if (!cursor.moveToFirst()) return@use null
+                        Triple(
+                            cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)),
+                            cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)),
+                            cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)),
+                        )
+                    }
+                }.getOrNull() ?: break
+            when (status) {
+                DownloadManager.STATUS_SUCCESSFUL -> {
+                    // The download receiver launches the installer; the
+                    // dialog just reports arrival.
+                    handle.showDownloaded()
+                    break
+                }
+                DownloadManager.STATUS_FAILED -> {
+                    handle.showFailed()
+                    lifecycleScope.launch {
+                        ToastHelper.show(this@MainActivity, R.string.home_update_download_failed)
+                    }
+                    break
+                }
+                else -> {
+                    if (total > 0) {
+                        handle.setProgress(((downloaded * 100) / total).toInt())
+                    }
+                    delay(DOWNLOAD_PROGRESS_POLL_MS)
+                }
+            }
+        }
+    }
+
+    private fun dismissUpdateBanner() {
+        bannerDismissJob?.cancel()
+        binding.updateBannerSlot.removeAllViews()
+        binding.updateBannerSlot.visibility = android.view.View.GONE
+    }
+
     private fun maybeShowStartupUpdatePrompt() {
         if (BuildConfig.FLAVOR != "github" || startupUpdatePromptHandled) return
 
@@ -199,6 +345,11 @@ class MainActivity :
         if (!isDownloadReceiverRegistered) return
         runCatching { unregisterReceiver(downloadReceiver) }
         isDownloadReceiverRegistered = false
+    }
+
+    companion object {
+        private const val UPDATE_BANNER_TIMEOUT_MS = 15_000L
+        private const val DOWNLOAD_PROGRESS_POLL_MS = 500L
     }
 
     fun startScreensaver() {

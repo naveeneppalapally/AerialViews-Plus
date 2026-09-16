@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Option B ambient banner: non-modal, bottom-right, overlay-styled.
+    Title/subtitle mirror the app's thin OverlayText; buttons are small
+    chips. Shown on startup when an update is available; auto-dismisses. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/update_prompt_panel_background"
+    android:clipToOutline="true"
+    android:gravity="center_vertical"
+    android:minWidth="300dp"
+    android:orientation="horizontal"
+    android:padding="14dp">
+
+    <View
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/update_banner_dot_background" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/update_banner_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif"
+            android:textColor="@color/update_prompt_text_primary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/update_banner_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="sans-serif-light"
+            android:textColor="@color/update_prompt_text_secondary"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/update_banner_details"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/update_prompt_button_primary_background"
+                android:fontFamily="sans-serif-medium"
+                android:paddingHorizontal="16dp"
+                android:textAllCaps="false"
+                android:textColor="@color/update_prompt_text_primary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/update_banner_dismiss"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/update_prompt_button_secondary_background"
+                android:fontFamily="sans-serif"
+                android:paddingHorizontal="16dp"
+                android:textAllCaps="false"
+                android:textColor="@color/update_prompt_text_primary"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -1048,5 +1048,12 @@
     <string name="home_update_app_name">AerialViews+</string>
     <string name="home_update_highlights">Release highlights</string>
     <string name="home_update_version_stable">Version stable</string>
+    <string name="home_update_banner_title">Update available · %1$s</string>
+    <string name="home_update_banner_subtitle">Background download · installs when ready</string>
+    <string name="home_update_details">Details</string>
+    <string name="home_update_dismiss">Dismiss</string>
+    <string name="home_update_art_meta">%1$s → %2$s · background download</string>
+    <string name="home_update_downloading">Downloading… %1$d%%</string>
+    <string name="home_update_downloaded">Download complete — opening installer…</string>
 
 </resources>

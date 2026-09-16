@@ -19,7 +19,6 @@ import com.neilturner.aerialviews.ui.controls.MenuStateFragment
 import com.neilturner.aerialviews.ui.helpers.DeviceHelper
 import com.neilturner.aerialviews.ui.helpers.PermissionHelper
 import com.neilturner.aerialviews.ui.helpers.ToastHelper
-import com.neilturner.aerialviews.utils.HomeUpdatePromptHelper
 import com.neilturner.aerialviews.utils.UpdateCheckResult
 import com.neilturner.aerialviews.utils.UpdateCheckerHelper
 import kotlinx.coroutines.launch
@@ -177,23 +176,15 @@ class MainFragment :
                         return@launch
                     }
 
-                    HomeUpdatePromptHelper.show(
-                        context = requireContext(),
-                        currentVersion = BuildConfig.VERSION_NAME,
-                        updateInfo = result.updateInfo,
-                        onDownload = {
-                            UpdatePrefs.homeUpdatePromptDismissedTag = ""
-                            val mainActivity = activity as? MainActivity
-                            if (mainActivity == null) {
-                                Timber.w("UpdateChecker: MainActivity unavailable for startup update download")
-                                return@show
-                            }
-                            mainActivity.startAppUpdateDownload(result.updateInfo)
-                        },
-                        onLater = {
-                            UpdatePrefs.homeUpdatePromptDismissedTag = result.updateInfo.tagName
-                        },
-                    )
+                    // Option B: ambient banner first (non-modal, auto-dismiss).
+                    // Details opens the C4 art-panel dialog; an untouched
+                    // banner re-appears next launch (no dismissed tag written).
+                    val mainActivity = activity as? MainActivity
+                    if (mainActivity == null) {
+                        Timber.w("UpdateChecker: MainActivity unavailable for startup update banner")
+                        return@launch
+                    }
+                    mainActivity.showUpdateBanner(result.updateInfo)
                 }
 
                 UpdateCheckResult.UpToDate,

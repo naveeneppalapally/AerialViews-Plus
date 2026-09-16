@@ -11,24 +11,59 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Option C4 dialog: art panel (version numeral + current → new meta) on the
+ * left, release notes on the right, and a determinate progress row owned by
+ * the returned [UpdateDialogHandle] so the download phase needs no second
+ * dialog. The system DownloadManager notification stays the fallback for a
+ * dismissed dialog.
+ */
 object HomeUpdatePromptHelper {
+    class UpdateDialogHandle(
+        val dialog: AlertDialog,
+        private val binding: DialogUpdatePromptBinding,
+    ) {
+        fun showDownloading() {
+            binding.updatePromptProgressRow.visibility = android.view.View.VISIBLE
+            binding.updatePromptDownload.isEnabled = false
+            setProgress(0)
+        }
+
+        fun setProgress(percent: Int) {
+            binding.updatePromptProgress.progress = percent.coerceIn(0, 100)
+            binding.updatePromptProgressText.text =
+                binding.root.context.getString(R.string.home_update_downloading, percent.coerceIn(0, 100))
+        }
+
+        fun showDownloaded() {
+            binding.updatePromptProgress.progress = 100
+            binding.updatePromptProgressText.text =
+                binding.root.context.getString(R.string.home_update_downloaded)
+        }
+
+        fun showFailed() {
+            binding.updatePromptDownload.isEnabled = true
+            binding.updatePromptProgressRow.visibility = android.view.View.GONE
+        }
+    }
+
     fun show(
         context: Context,
         currentVersion: String,
         updateInfo: UpdateInfo,
-        onDownload: () -> Unit,
+        onDownload: (UpdateDialogHandle) -> Unit,
         onLater: () -> Unit,
-    ): AlertDialog {
+    ): UpdateDialogHandle {
         val binding = DialogUpdatePromptBinding.inflate(LayoutInflater.from(context))
+        val newVersion = updateInfo.tagName.removePrefix("v")
 
-        binding.updatePromptBadge.text = context.getString(R.string.home_update_badge)
         binding.updatePromptAppName.text = context.getString(R.string.home_update_app_name)
-        binding.updatePromptVersion.text = updateInfo.tagName.removePrefix("v")
+        binding.updatePromptVersion.text = newVersion
         binding.updatePromptSummary.text =
             context.getString(
-                R.string.home_update_summary,
-                currentVersion,
-                updateInfo.tagName.removePrefix("v"),
+                R.string.home_update_art_meta,
+                currentVersion.removePrefix("v"),
+                newVersion,
             )
 
         binding.updatePromptHighlightsLabel.text = context.getString(R.string.home_update_highlights)
@@ -38,15 +73,14 @@ object HomeUpdatePromptHelper {
 
         binding.updatePromptDownload.text = context.getString(R.string.home_update_download)
         binding.updatePromptLater.text = context.getString(R.string.home_update_later)
-        binding.updatePromptVersionBadge.text = context.getString(R.string.home_update_version_stable)
 
         val dialog = AlertDialog.Builder(context).setView(binding.root).create()
+        val handle = UpdateDialogHandle(dialog, binding)
         dialog.setOnCancelListener { onLater() }
         dialog.setCanceledOnTouchOutside(false)
 
         binding.updatePromptDownload.setOnClickListener {
-            onDownload()
-            dialog.dismiss()
+            onDownload(handle)
         }
         binding.updatePromptLater.setOnClickListener {
             onLater()
@@ -56,11 +90,11 @@ object HomeUpdatePromptHelper {
         dialog.show()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setLayout(
-            (context.resources.displayMetrics.widthPixels * 0.80f).toInt(),
-            (context.resources.displayMetrics.heightPixels * 0.72f).toInt(),
+            (context.resources.displayMetrics.widthPixels * 0.62f).toInt(),
+            (context.resources.displayMetrics.heightPixels * 0.60f).toInt(),
         )
         binding.updatePromptDownload.requestFocus()
-        return dialog
+        return handle
     }
 
     private fun formatReleaseNotes(
