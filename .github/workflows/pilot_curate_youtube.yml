@@ -10,7 +10,7 @@ on:
       candidates_per_cat:
         description: 'Candidates per category'
         required: false
-        default: '10'
+        default: '8'
 
 jobs:
   curate:
@@ -26,22 +26,23 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
 
-      - name: Install PyTorch and OpenCLIP
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install open_clip_torch pillow
+          pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Run ML Curation Pilot
         run: |
           python3 scripts/curate_youtube_ml.py \
             --categories ${{ inputs.categories || 'drone nature ocean cities animals' }} \
-            --candidates-per-cat ${{ inputs.candidates_per_cat || '10' }} \
+            --candidates-per-cat ${{ inputs.candidates_per_cat || '8' }} \
             --output-dir curation_output
 
       - name: Upload Curated Artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: curated-youtube-pilot
           path: curation_output/
