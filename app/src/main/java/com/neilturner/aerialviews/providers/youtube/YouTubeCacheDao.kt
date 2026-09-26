@@ -82,6 +82,15 @@ interface YouTubeCacheDao {
     @Query("UPDATE youtube_cache SET lastPlayedAt = 0")
     suspend fun resetPlayHistory()
 
+    @Query("UPDATE youtube_cache SET consumedSegmentsMask = :mask WHERE videoId = :videoId")
+    suspend fun updateConsumedSegmentsMask(
+        videoId: String,
+        mask: Long,
+    ): Int
+
+    @Query("UPDATE youtube_cache SET consumedSegmentsMask = 0")
+    suspend fun resetAllConsumedSegments(): Int
+
     @Query(
         "DELETE FROM youtube_cache " +
             "WHERE isBad = 0 AND categoryKey IS NOT NULL AND categoryKey != '' AND categoryKey NOT IN (:allowedCategoryKeys)",

@@ -42,6 +42,7 @@ import com.neilturner.aerialviews.providers.webdav.WebDavDataSourceFactory
 import com.neilturner.aerialviews.providers.webdav.WebDavHostParser
 import com.neilturner.aerialviews.providers.webdav.defaultPortFor
 import com.neilturner.aerialviews.providers.youtube.NewPipeHelper
+import com.neilturner.aerialviews.providers.youtube.SegmentMaskEngine
 import com.neilturner.aerialviews.services.philips.CustomRendererFactory
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
@@ -481,34 +482,28 @@ object VideoPlayerHelper {
         return Pair(randomPosition, duration)
     }
 
-    private fun calculateRandomSegment(
+    fun calculateRandomSegment(
         duration: Long,
         maxLength: Long,
+        consumedMask: Long = 0L,
+        random: Random = Random.Default,
     ): Pair<Long, Long> {
         if (duration <= 0 || maxLength < TEN_SECONDS) {
             Timber.e("Invalid duration or max length: duration=$duration, maxLength=$maxLength")
             return Pair(0, duration.coerceAtLeast(0L))
         }
 
-        val effectiveMax = maxLength.coerceAtMost(duration)
-        val totalGuards = INTRO_SKIP_MS + OUTRO_GUARD_MS
-
-        if (duration > effectiveMax + totalGuards) {
-            val minStart = INTRO_SKIP_MS
-            val maxStart = duration - effectiveMax - OUTRO_GUARD_MS
-            val randomStart = Random.nextLong(minStart, maxStart + 1L)
-            val segmentEnd = randomStart + effectiveMax
-            Timber.i("Fluid random segment: ${randomStart.milliseconds} - ${segmentEnd.milliseconds} (duration: ${duration.milliseconds}, max: ${effectiveMax.milliseconds})")
-            return Pair(randomStart, segmentEnd)
-        } else if (duration > totalGuards) {
-            val segmentStart = INTRO_SKIP_MS
-            val segmentEnd = (duration - OUTRO_GUARD_MS).coerceAtLeast(segmentStart)
-            Timber.i("Protected window segment: ${segmentStart.milliseconds} - ${segmentEnd.milliseconds} (duration: ${duration.milliseconds})")
-            return Pair(segmentStart, segmentEnd)
-        } else {
-            Timber.i("Short video, playing full: 0 - ${duration.milliseconds}")
-            return Pair(0, duration)
-        }
+        val res =
+            SegmentMaskEngine.calculateNextSegment(
+                durationMs = duration,
+                segmentDurationMs = maxLength,
+                currentMask = consumedMask,
+                random = random,
+                introSkipMs = INTRO_SKIP_MS,
+                outroGuardMs = OUTRO_GUARD_MS,
+            )
+        Timber.i("64-bit segment: [${res.segmentIndex}] ${res.startMs.milliseconds} - ${res.endMs.milliseconds} (mask=0x${res.updatedMask.toString(16)}, rollover=${res.isRollover})")
+        return Pair(res.startMs, res.endMs)
     }
 
     private fun getWebDavValidateSslFromUri(uri: android.net.Uri): Boolean {

@@ -2058,8 +2058,13 @@ class YouTubeSourceRepository(
             return goodEntries
         }
 
+        // Apply device-entropy starting offset: each device begins traversal at a unique offset
+        val deviceSeed = DeviceEntropyEngine.getDeviceSeed(context)
+        val startOffset = (kotlin.math.abs(deviceSeed) % goodEntries.size).toInt()
+        val rotatedEntries = goodEntries.drop(startOffset) + goodEntries.take(startOffset)
+
         val playbackOrder = mutableListOf<YouTubeCacheEntity>()
-        val remainingEntries = goodEntries.toMutableList()
+        val remainingEntries = rotatedEntries.toMutableList()
         val simulation = createPlaylistSimulation()
 
         while (remainingEntries.isNotEmpty()) {
@@ -3245,15 +3250,17 @@ class YouTubeSourceRepository(
     private fun recentPlaybackCutoff(): Long =
         System.currentTimeMillis() - YouTubeHistoryTracker.RECENT_PLAYBACK_WINDOW_MS
 
-    private suspend fun createPlaylistSimulation(): PlaylistOrderer.PlaylistSimulation =
-        PlaylistOrderer.PlaylistSimulation(
+    private suspend fun createPlaylistSimulation(): PlaylistOrderer.PlaylistSimulation {
+        val deviceSeed = DeviceEntropyEngine.getDeviceSeed(context)
+        return PlaylistOrderer.PlaylistSimulation(
             history = playHistory(),
             themeHistory = themeHistory(),
             lastChannel = lastPlayedChannel(),
             firstLaunchActive = isFirstLaunchActive(),
             firstLaunchIndex = firstLaunchIndex(),
-            random = Random(System.nanoTime()),
+            random = Random(deviceSeed xor System.nanoTime()),
         )
+    }
 
     private data class RefreshPlan(
         val query: String,

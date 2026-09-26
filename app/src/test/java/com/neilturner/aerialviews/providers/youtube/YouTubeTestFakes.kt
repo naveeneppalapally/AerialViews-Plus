@@ -87,6 +87,18 @@ internal class FakeYouTubeCacheDao(
         entries.replaceAll { it.copy(lastPlayedAt = 0L) }
     }
 
+    override suspend fun updateConsumedSegmentsMask(videoId: String, mask: Long): Int {
+        val before = entries.firstOrNull { it.videoId == videoId } ?: return 0
+        updateEntry(videoId) { it.copy(consumedSegmentsMask = mask) }
+        return 1
+    }
+
+    override suspend fun resetAllConsumedSegments(): Int {
+        val count = entries.size
+        entries.replaceAll { it.copy(consumedSegmentsMask = 0L) }
+        return count
+    }
+
     override suspend fun deleteByNotInCategories(allowedCategoryKeys: List<String>): Int {
         val before = entries.size
         entries.removeAll { !it.isBad && it.categoryKey.isNotBlank() && it.categoryKey !in allowedCategoryKeys }

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [YouTubeCacheEntity::class, YouTubeWatchHistoryEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class YouTubeCacheDatabase : RoomDatabase() {
@@ -84,6 +84,14 @@ abstract class YouTubeCacheDatabase : RoomDatabase() {
                     )
                 }
             }
+        private val MIGRATION_7_8 =
+            object : Migration(7, 8) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE youtube_cache ADD COLUMN consumedSegmentsMask INTEGER NOT NULL DEFAULT 0",
+                    )
+                }
+            }
 
         @Volatile
         private var instance: YouTubeCacheDatabase? = null
@@ -97,7 +105,7 @@ abstract class YouTubeCacheDatabase : RoomDatabase() {
                                 context.applicationContext,
                                 YouTubeCacheDatabase::class.java,
                                 DATABASE_NAME,
-                            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                             // All upgrade paths have explicit migrations; only wipe on
                             // downgrade (e.g. beta back to stable), never on upgrade.
                             // A full destructive fallback here silently discarded the

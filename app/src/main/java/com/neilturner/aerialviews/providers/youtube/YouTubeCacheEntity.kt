@@ -19,4 +19,5 @@ data class YouTubeCacheEntity(
     val searchQuery: String? = null,
     val isBad: Boolean = false,
     val lastPlayedAt: Long = 0L,
+    val consumedSegmentsMask: Long = 0L,
 )

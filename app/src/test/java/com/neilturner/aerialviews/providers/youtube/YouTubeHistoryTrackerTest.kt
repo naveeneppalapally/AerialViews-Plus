@@ -23,6 +23,7 @@ internal class YouTubeHistoryTrackerTest {
             assertEquals("Woodland Films", tracker.lastPlayedChannel())
             assertEquals(1, tracker.firstLaunchIndex())
             assertTrue(tracker.isFirstLaunchActive())
+            assertTrue(cacheDao.getAll().first { it.videoId == "video1" }.consumedSegmentsMask != 0L)
         }
 
     @Test

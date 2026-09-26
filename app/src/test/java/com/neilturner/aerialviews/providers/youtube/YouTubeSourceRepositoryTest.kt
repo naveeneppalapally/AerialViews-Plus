@@ -731,6 +731,8 @@ internal class YouTubeSourceRepositoryTest {
         val context = mockk<Context>()
         every { context.packageManager } returns packageManager
         every { context.packageName } returns "com.naveen.aerialviewsplus"
+        every { context.noBackupFilesDir } returns java.io.File(System.getProperty("java.io.tmpdir") ?: ".")
+        every { context.filesDir } returns java.io.File(System.getProperty("java.io.tmpdir") ?: ".")
         return context
     }
 

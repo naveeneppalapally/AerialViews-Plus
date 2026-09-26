@@ -79,6 +79,15 @@ class YouTubeHistoryTracker(
     suspend fun recordPlayback(entry: YouTubeCacheEntity) {
         val playedAt = System.currentTimeMillis()
         cacheDao.markAsPlayed(entry.videoId, playedAt)
+        val durationMs = entry.durationSeconds.toLong() * 1000L
+        if (durationMs > 0L) {
+            val segmentResult =
+                SegmentMaskEngine.calculateNextSegment(
+                    durationMs = durationMs,
+                    currentMask = entry.consumedSegmentsMask,
+                )
+            cacheDao.updateConsumedSegmentsMask(entry.videoId, segmentResult.updatedMask)
+        }
         watchHistoryDao.insert(
             YouTubeWatchHistoryEntity(
                 videoId = entry.videoId,
