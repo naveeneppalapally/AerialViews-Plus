@@ -1,0 +1,30 @@
+{
+  "status": "COMPLETED",
+  "total_target": 50,
+  "total_audited": 58,
+  "total_approved": 50,
+  "target_per_category": {
+    "nature": 7,
+    "drone": 7,
+    "ocean": 7,
+    "cities": 7,
+    "animals": 7,
+    "space": 7,
+    "weather": 7,
+    "winter": 7
+  },
+  "approved_by_category": {
+    "nature": 8,
+    "drone": 10,
+    "ocean": 8,
+    "cities": 10,
+    "animals": 7,
+    "space": 7,
+    "weather": 0,
+    "winter": 0
+  },
+  "elapsed_seconds": 572.5,
+  "elapsed_minutes": 9.54,
+  "throughput_vids_per_min": 5.24,
+  "last_updated": "2026-09-26T13:05:02.264054+00:00"
+}
