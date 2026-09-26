@@ -184,7 +184,7 @@ class GeminiVisionClassifier:
             # Auto-discover active flash models from Google AI
             available = [m.name.replace("models/", "") for m in self.client.models.list() if "flash" in m.name.lower()]
             print(f"Available Google AI Flash models: {available}")
-            preferred = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b", "gemini-1.5-flash-latest"]
+            preferred = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b", "gemini-1.5-flash-latest"]
             for p in preferred:
                 if p in available:
                     self.model_name = p
