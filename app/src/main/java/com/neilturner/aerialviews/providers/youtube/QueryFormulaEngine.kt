@@ -70,7 +70,8 @@ object QueryFormulaEngine {
     val GLOBAL_NEGATIVE_TERMS = listOf(
         "-vlog", "-review", "-walk", "-walking", "-talking",
         "-guide", "-tour", "-hotel", "-resort", "-itinerary",
-        "-tips", "-podcast", "-reaction", "-sora", "-ai", "-cgi", "-render", "-demo"
+        "-tips", "-podcast", "-reaction", "-sora", "-ai", "-cgi", "-render", "-demo",
+        "-beauty", "-hours"
     )
 
     val GEAR_WASTE_NEGATIVE_TERMS = listOf(

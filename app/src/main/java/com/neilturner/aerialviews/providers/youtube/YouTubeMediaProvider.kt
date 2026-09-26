@@ -204,8 +204,22 @@ class YouTubeMediaProvider(
         private const val TAG = "YouTubeMedia"
         private val STARTUP_BOOTSTRAP_VIDEO_URLS =
             listOf(
-                "https://www.youtube.com/watch?v=BHACKCNDMW8",
-                "https://www.youtube.com/watch?v=LXb3EKWsInQ",
+                "https://www.youtube.com/watch?v=BJDa5KCwX-k", // Space: NASA 4K ISS aurora & Earth limb (Gemini: 95%)
+                "https://www.youtube.com/watch?v=Z6dQT6jcVuc", // Space: Milky Way night sky timelapse (Gemini: 95%)
+                "https://www.youtube.com/watch?v=1K6pNNEyJiI", // Space: Cygnus & Canadarm2 robotic arm (Gemini: 92%)
+                "https://www.youtube.com/watch?v=DhUj_TlqyfM", // Winter: Snowfall on plum blossoms (Gemini: 92%)
+                "https://www.youtube.com/watch?v=4sFxA80m9cw", // Winter: Snow-covered pine forest aerial (Gemini: 92%)
+                "https://www.youtube.com/watch?v=GtvT6XIk-sg", // Cities: NYC Midtown Manhattan 4K drone (Gemini: 88%)
+                "https://www.youtube.com/watch?v=u14It3zOcrk", // Weather: Baltic Sea storm clouds & golden sunset (Gemini: 88%)
+                "https://www.youtube.com/watch?v=O2X3fJZic2s", // Weather: Stormy ocean waves & dramatic clouds (Gemini: 88%)
+                "https://www.youtube.com/watch?v=kD-eN-Iw7dw", // Drone: Autumn Norway forest & mountains (Gemini: 85%)
+                "https://www.youtube.com/watch?v=1wo5i8STpGE", // Drone: Norway lake & wooden cabin aerial (Gemini: 85%)
+                "https://www.youtube.com/watch?v=ObuLT6imvrw", // Cities: Tokyo golden hour skyline panorama (Gemini: 85%)
+                "https://www.youtube.com/watch?v=GnaOHWO2VcU", // Cities: NYC nighttime illuminated skyline (Gemini: 85%)
+                "https://www.youtube.com/watch?v=Y_GRiXA8WiI", // Ocean: Raja Ampat coral garden & sweetlips (Gemini: 85%)
+                "https://www.youtube.com/watch?v=JXHbBZNcxp0", // Winter: Snow-covered forest river flowing (Gemini: 85%)
+                "https://www.youtube.com/watch?v=7qcWowgUjKo", // Space: Dark night sky starry peaks timelapse (Gemini: 85%)
+                "https://www.youtube.com/watch?v=52Uocxi4--A", // Ocean: Bonaire underwater coral & spotted pufferfish (Gemini: 78%)
             )
     }
 }

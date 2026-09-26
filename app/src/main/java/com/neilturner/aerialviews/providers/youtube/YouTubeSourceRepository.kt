@@ -237,11 +237,60 @@ class YouTubeSourceRepository(
     init {
         initializeCategorySnapshotIfNeeded()
         repositoryScope.launch {
+            seedCacheIfEmpty()
             val dbCount = cacheDao.countGoodEntries()
             sharedPreferences.edit {
                 putString(KEY_COUNT, dbCount.toString())
             }
             setLibraryStateIdle()
+        }
+    }
+
+    suspend fun seedCacheIfEmpty() {
+        withContext(Dispatchers.IO) {
+            try {
+                if (cacheDao.countGoodEntries() > 0) {
+                    return@withContext
+                }
+                val assetManager = runCatching { context.assets }.getOrNull() ?: return@withContext
+                val jsonString = runCatching {
+                    assetManager.open("curated_youtube_seed.json").bufferedReader().use { it.readText() }
+                }.getOrNull() ?: return@withContext
+
+                val jsonArray = org.json.JSONArray(jsonString)
+                val seedEntries = mutableListOf<YouTubeCacheEntity>()
+                val now = System.currentTimeMillis()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val videoId = obj.getString("videoId")
+                    val title = obj.getString("title")
+                    val uploaderName = obj.optString("uploaderName", "")
+                    val durationSeconds = obj.optInt("durationSeconds", 0)
+                    val categoryKey = obj.optString("categoryKey", "")
+                    val videoPageUrl = obj.optString("videoPageUrl", "https://www.youtube.com/watch?v=$videoId")
+                    seedEntries.add(
+                        YouTubeCacheEntity(
+                            videoId = videoId,
+                            videoPageUrl = videoPageUrl,
+                            streamUrl = "",
+                            audioStreamUrl = "",
+                            title = title,
+                            uploaderName = uploaderName,
+                            durationSeconds = durationSeconds,
+                            categoryKey = categoryKey,
+                            streamUrlExpiresAt = 0L,
+                            searchCachedAt = now,
+                            searchQuery = "seed:$categoryKey",
+                        )
+                    )
+                }
+                if (seedEntries.isNotEmpty()) {
+                    cacheDao.insertIgnore(seedEntries)
+                    Timber.tag(TAG).i("Seeded YouTube cache with %s pristine curated entries", seedEntries.size)
+                }
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "Failed to seed YouTube cache from assets")
+            }
         }
     }
 
