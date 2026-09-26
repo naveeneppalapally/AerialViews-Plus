@@ -1,0 +1,56 @@
+name: Gemini Vision YouTube Curation
+
+on:
+  workflow_dispatch:
+    inputs:
+      categories:
+        description: 'Categories to curate (space/comma separated)'
+        required: false
+        default: 'drone nature ocean cities animals space weather winter'
+      candidates_per_cat:
+        description: 'Candidates per category'
+        required: false
+        default: '20'
+
+jobs:
+  curate-gemini:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow
+
+      - name: Run Gemini Vision Curation
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 scripts/curate_youtube_gemini.py \
+            --categories ${{ inputs.categories || 'drone nature ocean cities animals space weather winter' }} \
+            --candidates-per-cat ${{ inputs.candidates_per_cat || '20' }} \
+            --output-dir curation_output
+
+      - name: Publish Step Summary
+        if: always()
+        run: |
+          if [ -f curation_output/github_step_summary.md ]; then
+            cat curation_output/github_step_summary.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Curated Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: curated-youtube-gemini
+          path: curation_output/
+          retention-days: 14
