@@ -109,5 +109,7 @@ lint/tmp/
 
 # ML Curation and Python artifacts
 curation_output/
+frames_10k/
+curation_state/frame_batches/
 __pycache__/
 *.pyc
