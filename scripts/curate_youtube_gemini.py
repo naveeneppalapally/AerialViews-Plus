@@ -175,9 +175,15 @@ def parse_duration_seconds(length_str):
 
 class GeminiVisionClassifier:
     def __init__(self, api_key, model_name="gemini-1.5-flash"):
-        self.api_key = api_key
+        self.api_key = api_key.strip()
         self.model_name = model_name
-        self.endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        self.client = None
+        try:
+            from google import genai
+            self.client = genai.Client(api_key=self.api_key)
+            print(f"Initialized official google-genai SDK with model '{model_name}'.")
+        except Exception as e:
+            print(f"google-genai SDK not available ({e}), using direct REST API fallback.")
 
     def evaluate_image(self, image_bytes: bytes, title: str, category: str):
         prompt = f"""You are the master art director and visual quality curator for AerialViews+, an open-source 4K screensaver for large OLED/Living Room TVs.
@@ -207,6 +213,26 @@ Respond ONLY with a valid JSON object matching this schema:
   "visual_description": "<one sentence describing what is seen>"
 }}"""
 
+        # 1. Preferred path: Official google-genai SDK
+        if self.client:
+            try:
+                from google.genai import types
+                resp = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[
+                        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                        prompt
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.2
+                    )
+                )
+                return json.loads(resp.text)
+            except Exception as e:
+                print(f"google-genai SDK call failed: {e}, attempting REST fallback...", file=sys.stderr)
+
+        # 2. Robust REST fallback
         b64_img = base64.b64encode(image_bytes).decode("utf-8")
         payload = {
             "contents": [{
@@ -221,10 +247,14 @@ Respond ONLY with a valid JSON object matching this schema:
             }
         }
         
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
         req = urllib.request.Request(
-            self.endpoint,
+            endpoint,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key
+            }
         )
         
         try:
@@ -232,8 +262,22 @@ Respond ONLY with a valid JSON object matching this schema:
                 result_json = json.loads(resp.read().decode("utf-8"))
                 text = result_json["candidates"][0]["content"]["parts"][0]["text"]
                 return json.loads(text)
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8")
+            except Exception:
+                pass
+            print(f"Gemini REST API Error {e.code}: {err_body}", file=sys.stderr)
+            return {
+                "decision": "VETOED",
+                "aesthetic_score": 0,
+                "waste_score": 100,
+                "reason": f"Gemini API HTTP {e.code}: {err_body[:100]}",
+                "detected_waste_elements": ["api_error"],
+                "visual_description": "Failed to analyze"
+            }
         except Exception as e:
-            # Fallback error response
             return {
                 "decision": "VETOED",
                 "aesthetic_score": 0,
