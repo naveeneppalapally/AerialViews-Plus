@@ -1,17 +1,5 @@
 [
   {
-    "videoId": "91ty5_tRt00",
-    "title": "\u201cJourney Through Majestic Mountain Landscapes and Serene River Waters \u2014 the solo trek",
-    "uploaderName": "The_Solo_Trek",
-    "durationSeconds": 322,
-    "categoryKey": "nature",
-    "videoPageUrl": "https://www.youtube.com/watch?v=91ty5_tRt00",
-    "streamQualityScore": 100,
-    "visualDescription": "Verified pristine 4K nature ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
-    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
-    "verifiedAt": "2026-09-26T12:56:13.575192+00:00"
-  },
-  {
     "videoId": "0bCGA6GQvCs",
     "title": "ZHANGJIAJIE China most Amazing National Forest Park (Avatar floating mountains). Best by drone (4K)",
     "uploaderName": "Miki Sivan",
@@ -82,18 +70,6 @@
     "visualDescription": "Verified pristine 4K nature ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
     "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
     "verifiedAt": "2026-09-26T12:56:52.051108+00:00"
-  },
-  {
-    "videoId": "iVZAt1t_EaI",
-    "title": "Silent Hike in Liguria, Italy | Rocchetta Nervina 4K | Cinematic Mountain Hike",
-    "uploaderName": "Yorick Wentink",
-    "durationSeconds": 485,
-    "categoryKey": "nature",
-    "videoPageUrl": "https://www.youtube.com/watch?v=iVZAt1t_EaI",
-    "streamQualityScore": 100,
-    "visualDescription": "Verified pristine 4K nature ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
-    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
-    "verifiedAt": "2026-09-26T12:56:52.051223+00:00"
   },
   {
     "videoId": "bkXKLFfkY8w",
@@ -420,18 +396,6 @@
     "verifiedAt": "2026-09-26T13:02:22.764517+00:00"
   },
   {
-    "videoId": "vAuTgN7DoAw",
-    "title": "Explore Hollywood Hills Modern Mansion | Luxury Homes Tour in 4K",
-    "uploaderName": "The Ambience Architect",
-    "durationSeconds": 614,
-    "categoryKey": "cities",
-    "videoPageUrl": "https://www.youtube.com/watch?v=vAuTgN7DoAw",
-    "streamQualityScore": 87,
-    "visualDescription": "Verified pristine 4K cities ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
-    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
-    "verifiedAt": "2026-09-26T13:02:22.764709+00:00"
-  },
-  {
     "videoId": "rplG42457-I",
     "title": "Antarctica Wildlife 4K: Penguins, Whales & Ice Landscapes | Nature Sounds",
     "uploaderName": "Relaxation Scenes 4K",
@@ -598,5 +562,41 @@
     "visualDescription": "Verified pristine 4K space ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
     "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
     "verifiedAt": "2026-09-26T13:05:02.263307+00:00"
+  },
+  {
+    "videoId": "UOX9M-fNpH8",
+    "title": "Switzerland 4K \u2013 Epic Drone Journey, Majestic Waterfalls & Relaxing Ambient Music",
+    "uploaderName": "NoWordsWorld",
+    "durationSeconds": 920,
+    "categoryKey": "nature",
+    "videoPageUrl": "https://www.youtube.com/watch?v=UOX9M-fNpH8",
+    "streamQualityScore": 100,
+    "visualDescription": "Pristine 4K aerial drone flyovers of Swiss alpine waterfalls, lush valleys, and towering peaks with zero talking.",
+    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU, 8-Point Dense Audit)",
+    "verifiedAt": "2026-09-26T13:18:41.362515+00:00"
+  },
+  {
+    "videoId": "OOdbXLai2jE",
+    "title": "4K Aerial Iceland - Amazing nature scenery - Winter Wonderland - Waterfalls - Glaciers - Lagoons",
+    "uploaderName": "Nature Escape",
+    "durationSeconds": 565,
+    "categoryKey": "nature",
+    "videoPageUrl": "https://www.youtube.com/watch?v=OOdbXLai2jE",
+    "streamQualityScore": 100,
+    "visualDescription": "Spectacular 4K aerial cinematography of Icelandic glacial rivers, basalt canyons, and massive waterfalls.",
+    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU, 8-Point Dense Audit)",
+    "verifiedAt": "2026-09-26T13:18:41.362532+00:00"
+  },
+  {
+    "videoId": "6k7a8bw451M",
+    "title": "Japan Night Aerials in 8K",
+    "uploaderName": "Armadas",
+    "durationSeconds": 415,
+    "categoryKey": "cities",
+    "videoPageUrl": "https://www.youtube.com/watch?v=6k7a8bw451M",
+    "streamQualityScore": 100,
+    "visualDescription": "Reference-grade 8K night aerial cinematography over Tokyo skylines, illuminated bridges, and highway interchanges.",
+    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU, 6-Point Dense Audit)",
+    "verifiedAt": "2026-09-26T13:18:41.362535+00:00"
   }
 ]

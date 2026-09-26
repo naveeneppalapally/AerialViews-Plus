@@ -83,7 +83,8 @@ TITLE_BLACKLIST = [
     "tutorial", "how to", "sora", "runway ml", "midjourney", "pika labs",
     "ai generated", "made with ai", "3d animation", "render", "gameplay", "walk tour",
     "demo", "oled demo", "4k demo", "tv demo", "test", "settings", "bts", "commercial",
-    "color grade", "lut", "luts", "davinci resolve", "premiere pro", "walking tour", "walk in"
+    "color grade", "lut", "luts", "davinci resolve", "premiere pro", "walking tour", "walk in",
+    "solo trek", "trek", "hike", "hiking", "backpacking", "camping", "trail walk", "mansion tour", "home tour", "pov walk", "inside"
 ]
 
 def log(msg: str):
@@ -210,9 +211,12 @@ def resolve_and_extract_burst(video_id: str, duration: int) -> tuple[list[str], 
         return [], "no_stream"
 
     t_anchors = [
-        max(35.0, 0.12 * duration),
-        max(60.0, 0.50 * duration),
-        max(90.0, 0.82 * duration)
+        max(15.0, 0.08 * duration),
+        max(30.0, 0.22 * duration),
+        max(60.0, 0.42 * duration),
+        max(90.0, 0.62 * duration),
+        max(120.0, 0.80 * duration),
+        max(150.0, 0.94 * duration)
     ]
 
     frame_paths = []
