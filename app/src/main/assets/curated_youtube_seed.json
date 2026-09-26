@@ -600,42 +600,6 @@
     "verifiedAt": "2026-09-26T13:51:33.157586+00:00"
   },
   {
-    "videoId": "Hu9dLJYa3ms",
-    "title": "Wyoming's Wildest Landscapes: 4K Drone Views of the American West",
-    "uploaderName": "DIGITALRIDE",
-    "durationSeconds": 616,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=Hu9dLJYa3ms",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.239693"
-  },
-  {
-    "videoId": "OAndC7y0YIg",
-    "title": "Iceland Cinematic Drone 4k",
-    "uploaderName": "LeW\u00fcsa",
-    "durationSeconds": 353,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=OAndC7y0YIg",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.239746"
-  },
-  {
-    "videoId": "ApsGdpXVWwM",
-    "title": "\u269c\ufe0f Explore Anse \u00e0 Valleau, Gasp\u00e9 \ud83c\udde8\ud83c\udde6 | Stunning 4K Drone Footage with DJI Mini 2 \ud83d\ude81",
-    "uploaderName": "OurRetiredLife",
-    "durationSeconds": 385,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=ApsGdpXVWwM",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.239801"
-  },
-  {
     "videoId": "z9P4YwjP0Ak",
     "title": "4K Drone Exploration: A Cinematic Flight Over Natural Beauty",
     "uploaderName": "avare yolculuk",
@@ -644,7 +608,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=z9P4YwjP0Ak",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.239877"
   },
   {
@@ -656,7 +620,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=ZAiuC9zFk9U",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.239907"
   },
   {
@@ -668,7 +632,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=71_JGAZzC7A",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.239936"
   },
   {
@@ -680,20 +644,8 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=QwocqbecFiQ",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.239961"
-  },
-  {
-    "videoId": "Tc0LU7y3btU",
-    "title": "4K Video - Beautiful Chile - Patagonia in Ultra HD!",
-    "uploaderName": "LoungeV Films - Relaxing Music and Nature Sounds",
-    "durationSeconds": 447,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=Tc0LU7y3btU",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240008"
   },
   {
     "videoId": "pxh77LDWIp0",
@@ -704,7 +656,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=pxh77LDWIp0",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240036"
   },
   {
@@ -716,7 +668,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=-Wvp1HuVhFc",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240064"
   },
   {
@@ -728,32 +680,8 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=ys_M8Kzeo0Y",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240095"
-  },
-  {
-    "videoId": "puZFfoaxYCk",
-    "title": "AFRICAN SAFARI IN 4K - SPECTACULAR AERIAL WILDLIFE FILM | DJI AIR 3S",
-    "uploaderName": "TheHuntingAlex",
-    "durationSeconds": 821,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=puZFfoaxYCk",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240123"
-  },
-  {
-    "videoId": "5pqwQk9JAYw",
-    "title": "Muriwai Beach \ud83c\udf0a | Gannet Colony & Wild West Coast in 4K | Nature Relaxation + Drone Footage \ud83c\uddf3\ud83c\uddff",
-    "uploaderName": "V travels",
-    "durationSeconds": 569,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=5pqwQk9JAYw",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240191"
   },
   {
     "videoId": "lhy_WXIgCyw",
@@ -764,7 +692,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=lhy_WXIgCyw",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240273"
   },
   {
@@ -776,20 +704,8 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=38aJ9R6SZmE",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240324"
-  },
-  {
-    "videoId": "tb8zG-EuTkE",
-    "title": "Top 5 Places to Visit in the Wait\u0101kere Ranges | 4K + Drone Footage | NEW ZEALAND",
-    "uploaderName": "V travels",
-    "durationSeconds": 2798,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=tb8zG-EuTkE",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240354"
   },
   {
     "videoId": "nDK8qTr8jrs",
@@ -800,7 +716,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=nDK8qTr8jrs",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240477"
   },
   {
@@ -812,7 +728,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=7b5V6muAtMk",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240512"
   },
   {
@@ -824,20 +740,8 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=Rui0bd11fcM",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240621"
-  },
-  {
-    "videoId": "uzIGZzM2GrM",
-    "title": "Patagonia\u2019s Untamed Beauty 4K: Untouched Wilderness & Incredible Wildlife",
-    "uploaderName": "4k Scenic Nature Film",
-    "durationSeconds": 1623,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=uzIGZzM2GrM",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240653"
   },
   {
     "videoId": "KISuyH3M5Nw",
@@ -848,7 +752,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=KISuyH3M5Nw",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240684"
   },
   {
@@ -860,20 +764,8 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=4_piiGzuqWU",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240715"
-  },
-  {
-    "videoId": "Q_2qNVQt6Gw",
-    "title": "Winter in Norway 4K \u2744\ufe0f Winter Wonderland of Snowy Fjords, Arctic Landscapes & Frozen Seas",
-    "uploaderName": "Timeless Landscapes 4K   ",
-    "durationSeconds": 11699,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=Q_2qNVQt6Gw",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240745"
   },
   {
     "videoId": "QLyXDWxaekM",
@@ -884,19 +776,7 @@
     "videoPageUrl": "https://www.youtube.com/watch?v=QLyXDWxaekM",
     "streamQualityScore": 90,
     "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
+    "verifiedBy": "OpenCLIP + DGC + Antigravity Gemini Vision",
     "verifiedAt": "2026-09-26T21:21:19.240800"
-  },
-  {
-    "videoId": "u_g-XTeEkvs",
-    "title": "Breathtaking 4K Lofoten Islands: Experience Norway\u2019s Northern Lights and Untamed Beauty",
-    "uploaderName": "Savvy Voyages",
-    "durationSeconds": 1386,
-    "categoryKey": "drone",
-    "videoPageUrl": "https://www.youtube.com/watch?v=u_g-XTeEkvs",
-    "streamQualityScore": 90,
-    "visualDescription": "Pristine 4K ambient cinematography.",
-    "verifiedBy": "OpenCLIP ViT-B-32 + DGC + Gemini Vision (Colab GPU)",
-    "verifiedAt": "2026-09-26T21:21:19.240830"
   }
 ]
