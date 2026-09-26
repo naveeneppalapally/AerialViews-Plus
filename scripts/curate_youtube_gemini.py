@@ -173,28 +173,57 @@ def parse_duration_seconds(length_str):
         pass
     return 0
 
+def extract_json_payload(raw_text: str):
+    """Safely extracts JSON even if enclosed in markdown code fences."""
+    text = raw_text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    return json.loads(text.strip())
+
 class GeminiVisionClassifier:
     def __init__(self, api_key, model_name=None):
         self.api_key = api_key.strip()
-        self.model_name = model_name or "gemini-2.0-flash"
         self.client = None
+        self.model_candidates = []
+        
+        # Priority order for active vision-capable models recommended by Google AI
+        preferred_order = [
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-flash-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash-lite",
+            "gemini-3-flash-preview"
+        ]
+        
         try:
             from google import genai
             self.client = genai.Client(api_key=self.api_key)
-            # Auto-discover active flash models from Google AI
-            available = [m.name.replace("models/", "") for m in self.client.models.list() if "flash" in m.name.lower()]
-            print(f"Available Google AI Flash models: {available}")
-            preferred = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b", "gemini-1.5-flash-latest"]
-            for p in preferred:
-                if p in available:
-                    self.model_name = p
-                    break
-            else:
-                if available:
-                    self.model_name = available[0]
-            print(f"Initialized official google-genai SDK with active model '{self.model_name}'.")
+            all_models = [m.name.replace("models/", "") for m in self.client.models.list()]
+            available_flash = [m for m in all_models if "flash" in m.lower() and "tts" not in m.lower() and "audio" not in m.lower()]
+            print(f"Available Google AI Flash models: {available_flash}")
+            
+            for p in preferred_order:
+                if p in available_flash:
+                    self.model_candidates.append(p)
+                    
+            for m in available_flash:
+                if m not in self.model_candidates and "2.5-flash" != m:
+                    self.model_candidates.append(m)
         except Exception as e:
-            print(f"google-genai SDK auto-discovery notice ({e}), defaulting to '{self.model_name}'.")
+            print(f"google-genai SDK auto-discovery notice ({e})")
+
+        if model_name:
+            self.model_candidates.insert(0, model_name)
+            
+        if not self.model_candidates:
+            self.model_candidates = preferred_order
+
+        self.model_name = self.model_candidates[0]
+        print(f"Prioritized Gemini models to try: {self.model_candidates}. Starting with '{self.model_name}'.")
 
     def evaluate_image(self, image_bytes: bytes, title: str, category: str):
         prompt = f"""You are the master art director and visual quality curator for AerialViews+, an open-source 4K screensaver for large OLED/Living Room TVs.
@@ -224,26 +253,32 @@ Respond ONLY with a valid JSON object matching this schema:
   "visual_description": "<one sentence describing what is seen>"
 }}"""
 
-        # 1. Preferred path: Official google-genai SDK
+        # 1. Preferred path: Official google-genai SDK with multi-model fallback
         if self.client:
-            try:
-                from google.genai import types
-                resp = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=[
-                        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                        prompt
-                    ],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.2
+            for cand_model in list(self.model_candidates):
+                try:
+                    from google.genai import types
+                    resp = self.client.models.generate_content(
+                        model=cand_model,
+                        contents=[
+                            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                            prompt
+                        ],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.2
+                        )
                     )
-                )
-                return json.loads(resp.text)
-            except Exception as e:
-                print(f"google-genai SDK call failed: {e}, attempting REST fallback...", file=sys.stderr)
+                    parsed = extract_json_payload(resp.text)
+                    if cand_model != self.model_name:
+                        self.model_name = cand_model
+                        print(f"Locked onto working Gemini model: '{self.model_name}'")
+                    return parsed
+                except Exception as e:
+                    print(f"google-genai SDK call failed with '{cand_model}': {e}", file=sys.stderr)
+                    continue
 
-        # 2. Robust REST fallback
+        # 2. Robust REST fallback with multi-model fallback
         b64_img = base64.b64encode(image_bytes).decode("utf-8")
         payload = {
             "contents": [{
@@ -258,45 +293,48 @@ Respond ONLY with a valid JSON object matching this schema:
             }
         }
         
-        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key
-            }
-        )
-        
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                result_json = json.loads(resp.read().decode("utf-8"))
-                text = result_json["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text)
-        except urllib.error.HTTPError as e:
-            err_body = ""
+        last_error = "Unknown error"
+        for cand_model in list(self.model_candidates):
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{cand_model}:generateContent"
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key
+                }
+            )
             try:
-                err_body = e.read().decode("utf-8")
-            except Exception:
-                pass
-            print(f"Gemini REST API Error {e.code}: {err_body}", file=sys.stderr)
-            return {
-                "decision": "VETOED",
-                "aesthetic_score": 0,
-                "waste_score": 100,
-                "reason": f"Gemini API HTTP {e.code}: {err_body[:100]}",
-                "detected_waste_elements": ["api_error"],
-                "visual_description": "Failed to analyze"
-            }
-        except Exception as e:
-            return {
-                "decision": "VETOED",
-                "aesthetic_score": 0,
-                "waste_score": 100,
-                "reason": f"Gemini API evaluation failed: {e}",
-                "detected_waste_elements": ["api_error"],
-                "visual_description": "Failed to analyze"
-            }
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    result_json = json.loads(resp.read().decode("utf-8"))
+                    text = result_json["candidates"][0]["content"]["parts"][0]["text"]
+                    parsed = extract_json_payload(text)
+                    if cand_model != self.model_name:
+                        self.model_name = cand_model
+                        print(f"Locked onto working Gemini REST model: '{self.model_name}'")
+                    return parsed
+            except urllib.error.HTTPError as e:
+                err_body = ""
+                try:
+                    err_body = e.read().decode("utf-8")
+                except Exception:
+                    pass
+                last_error = f"HTTP {e.code}: {err_body[:100]}"
+                print(f"Gemini REST with '{cand_model}' failed: {last_error}", file=sys.stderr)
+                continue
+            except Exception as e:
+                last_error = str(e)
+                print(f"Gemini REST with '{cand_model}' exception: {last_error}", file=sys.stderr)
+                continue
+                
+        return {
+            "decision": "VETOED",
+            "aesthetic_score": 0,
+            "waste_score": 100,
+            "reason": f"Gemini API evaluation failed: {last_error}",
+            "detected_waste_elements": ["api_error"],
+            "visual_description": "Failed to analyze"
+        }
 
 def mine_blacklist_tokens(approved, eliminated):
     waste_titles = [e["title"].lower() for e in eliminated]
