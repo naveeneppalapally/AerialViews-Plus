@@ -348,18 +348,6 @@
     "verifiedAt": "2026-09-26T13:01:46.904809+00:00"
   },
   {
-    "videoId": "NPTrT_NAZlY",
-    "title": "Gurgaon M3M 65th Avenue twilight view | 4K Cinematic view of Urban Lights",
-    "uploaderName": "Beautiful Aerials",
-    "durationSeconds": 243,
-    "categoryKey": "cities",
-    "videoPageUrl": "https://www.youtube.com/watch?v=NPTrT_NAZlY",
-    "streamQualityScore": 100,
-    "visualDescription": "Verified pristine 4K cities ambient cinematography evaluated on Google Colab Tesla T4 GPU.",
-    "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU)",
-    "verifiedAt": "2026-09-26T13:01:46.905008+00:00"
-  },
-  {
     "videoId": "TzDR5Oe_waw",
     "title": "Above Seattle City, Breathtaking 4K Drone Footage of Washington\u2019s Crown Jewel | USA",
     "uploaderName": " Travel the World 4K",
@@ -598,5 +586,17 @@
     "visualDescription": "Reference-grade 8K night aerial cinematography over Tokyo skylines, illuminated bridges, and highway interchanges.",
     "verifiedBy": "OpenCLIP ViT-B-32 (Google Colab Tesla T4 GPU, 6-Point Dense Audit)",
     "verifiedAt": "2026-09-26T13:18:41.362535+00:00"
+  },
+  {
+    "videoId": "M6DtEAYgOsM",
+    "title": "Chicago, USA \ud83c\uddfa\ud83c\uddf8 - by drone [4K]",
+    "uploaderName": "Drone Snap",
+    "durationSeconds": 300,
+    "categoryKey": "cities",
+    "videoPageUrl": "https://www.youtube.com/watch?v=M6DtEAYgOsM",
+    "streamQualityScore": 100,
+    "visualDescription": "Pristine 4K cinematic drone flight over Chicago skyscrapers, Lake Michigan coastline, and river bridges with zero watermarks.",
+    "verifiedBy": "OpenCLIP ViT-B-32 + DGC Watermark Detector (0.22% static edge ratio)",
+    "verifiedAt": "2026-09-26T13:28:47.329267+00:00"
   }
 ]
