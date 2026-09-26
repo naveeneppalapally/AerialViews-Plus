@@ -174,16 +174,27 @@ def parse_duration_seconds(length_str):
     return 0
 
 class GeminiVisionClassifier:
-    def __init__(self, api_key, model_name="gemini-1.5-flash"):
+    def __init__(self, api_key, model_name=None):
         self.api_key = api_key.strip()
-        self.model_name = model_name
+        self.model_name = model_name or "gemini-2.0-flash"
         self.client = None
         try:
             from google import genai
             self.client = genai.Client(api_key=self.api_key)
-            print(f"Initialized official google-genai SDK with model '{model_name}'.")
+            # Auto-discover active flash models from Google AI
+            available = [m.name.replace("models/", "") for m in self.client.models.list() if "flash" in m.name.lower()]
+            print(f"Available Google AI Flash models: {available}")
+            preferred = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b", "gemini-1.5-flash-latest"]
+            for p in preferred:
+                if p in available:
+                    self.model_name = p
+                    break
+            else:
+                if available:
+                    self.model_name = available[0]
+            print(f"Initialized official google-genai SDK with active model '{self.model_name}'.")
         except Exception as e:
-            print(f"google-genai SDK not available ({e}), using direct REST API fallback.")
+            print(f"google-genai SDK auto-discovery notice ({e}), defaulting to '{self.model_name}'.")
 
     def evaluate_image(self, image_bytes: bytes, title: str, category: str):
         prompt = f"""You are the master art director and visual quality curator for AerialViews+, an open-source 4K screensaver for large OLED/Living Room TVs.
