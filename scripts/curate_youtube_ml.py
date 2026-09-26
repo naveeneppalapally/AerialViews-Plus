@@ -18,7 +18,8 @@ from collections import Counter
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
-from PIL import Image
+from PIL import Image, ImageChops
+import numpy as np
 import torch
 import open_clip
 
@@ -183,6 +184,52 @@ def parse_duration_seconds(length_str):
         pass
     return 0
 
+def extract_video_frames(video_id, timestamps=(60, 120)):
+    """
+    Stage 3: Deep Stream Frame Extraction.
+    Resolves direct low-res video stream URL (no file download) and extracts frames
+    at specified timestamps using ffmpeg.
+    """
+    try:
+        import yt_dlp
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            chosen_url = None
+            for f in info.get("formats", []):
+                if f.get("vcodec") != "none" and f.get("url") and "manifest" not in f.get("url"):
+                    if f.get("height") in [360, 480, 240]:
+                        chosen_url = f["url"]
+                        break
+            if not chosen_url:
+                for f in info.get("formats", []):
+                    if f.get("vcodec") != "none" and f.get("url") and "manifest" not in f.get("url"):
+                        chosen_url = f["url"]
+                        break
+            if not chosen_url:
+                return None
+
+        frames = {}
+        for ts in timestamps:
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(ts),
+                "-i", chosen_url,
+                "-vframes", "1",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "pipe:1"
+            ]
+            res = subprocess.run(cmd, capture_output=True, timeout=12)
+            if res.returncode == 0 and len(res.stdout) > 1000:
+                frames[ts] = Image.open(io.BytesIO(res.stdout)).convert("RGB")
+        return frames if frames else None
+    except Exception:
+        return None
+
 class AmbientClassifier:
     def __init__(self, device="cpu"):
         self.device = device
@@ -198,7 +245,11 @@ class AmbientClassifier:
             "a peaceful cinematic nature view of mountains, forests, or oceans",
             "wild animals or marine life in their natural habitat",
             "a city skyline timelapse with architecture and evening lights",
-            "scenic clouds weather or starry night sky"
+            "scenic clouds weather or starry night sky",
+            "a view of planet earth, auroras, or stars from space or the international space station",
+            "deep space nebula astrophotography or glowing night sky",
+            "a serene winter snow landscape with mountains, ice, or frozen lake",
+            "desert sand dunes or arid canyon landscape under sunlight"
         ]
         
         self.waste_prompts = [
@@ -207,7 +258,8 @@ class AmbientClassifier:
             "a YouTube video thumbnail with large bold title text graphics watermark",
             "a podcast studio with microphone headphones and host",
             "an indoor room bedroom living room or office studio",
-            "a 3D animated CGI cartoon or artificial render"
+            "a 3D animated CGI cartoon or artificial render",
+            "a static still photograph with no camera motion"
         ]
         
         self.all_prompts = self.ambient_prompts + self.waste_prompts
@@ -432,11 +484,62 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
                 continue
                 
             eval_res = classifier.evaluate_image(img)
+            eval_res["stage"] = "Stage 2 (Thumbnail Vision)"
             
-            # Decision boundary: Extreme precision rule
-            # Reject if: top label is waste OR waste score > waste_threshold
+            # Initial waste decision from thumbnail
             is_waste = eval_res["is_top_waste"] or eval_res["waste_score"] > waste_threshold
-            
+            rescued_by_stage_3 = False
+
+            # --- Stage 3: Deep Stream Frame & Temporal Verification ---
+            # If thumbnail indicates waste, check whether it is purely thumbnail text/clickbait cover
+            # or borderline (waste_score <= 65% or thumbnail text graphics prompt).
+            is_thumbnail_text_only = (eval_res["top_prompt"] == "a YouTube video thumbnail with large bold title text graphics watermark")
+            is_borderline_waste = (38.0 <= eval_res["waste_score"] <= 65.0)
+
+            if is_waste and (is_thumbnail_text_only or is_borderline_waste):
+                frames = extract_video_frames(vid, timestamps=(60, 120))
+                if frames and 60 in frames:
+                    # 1. Temporal motion check: Is it a static photo loop with fake rain/stars?
+                    is_static_loop = False
+                    motion_delta = None
+                    if 120 in frames:
+                        f60 = frames[60]
+                        f120 = frames[120].resize(f60.size)
+                        diff = ImageChops.difference(f60, f120)
+                        motion_delta = float(np.array(diff).mean())
+                        if motion_delta < 8.0:
+                            is_static_loop = True
+
+                    if is_static_loop:
+                        eval_res = {
+                            "ambient_score": 10.0,
+                            "waste_score": 90.0,
+                            "top_prompt": "a static still photograph with no camera motion",
+                            "top_prob": 90.0,
+                            "is_top_waste": True,
+                            "stage": "Stage 3 (Temporal Motion Veto)",
+                            "motion_delta": round(motion_delta, 2)
+                        }
+                        is_waste = True
+                    else:
+                        # 2. OpenCLIP classification of the actual 60s video frame
+                        frame_eval = classifier.evaluate_image(frames[60])
+                        frame_is_waste = frame_eval["is_top_waste"] or frame_eval["waste_score"] > waste_threshold
+                        if not frame_is_waste:
+                            # Rescued! The creator only put loud text on the YouTube cover image,
+                            # but the video content at 60s is genuine, clean ambient footage.
+                            eval_res = frame_eval
+                            eval_res["stage"] = "Stage 3 (Video Frame Verified)"
+                            eval_res["motion_delta"] = round(motion_delta, 2) if motion_delta is not None else None
+                            is_waste = False
+                            rescued_by_stage_3 = True
+                        else:
+                            # Frame also contains waste (e.g. persistent watermarks, talking head, indoor)
+                            eval_res = frame_eval
+                            eval_res["stage"] = "Stage 3 (Video Frame Veto)"
+                            eval_res["motion_delta"] = round(motion_delta, 2) if motion_delta is not None else None
+                            is_waste = True
+
             # Borderline tracking (+/- 7% from decision threshold)
             if abs(eval_res["waste_score"] - waste_threshold) <= 7.0:
                 borderline_entries.append({
@@ -448,6 +551,7 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
                     "waste_score": eval_res["waste_score"],
                     "ambient_score": eval_res["ambient_score"],
                     "top_prompt": eval_res["top_prompt"],
+                    "stage": eval_res.get("stage", "Stage 2"),
                     "url": f"https://youtu.be/{vid}"
                 })
             
@@ -457,14 +561,14 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
                     "title": title,
                     "uploader": uploader,
                     "category": cat,
-                    "stage": "Stage 2 (Vision)",
+                    "stage": eval_res.get("stage", "Stage 2 (Vision)"),
                     "reason": f"{eval_res['top_prompt']} (Waste Confidence: {eval_res['waste_score']}%)",
                     "scores": eval_res,
                     "url": f"https://youtu.be/{vid}"
                 })
                 if source_q in query_stats:
                     query_stats[source_q]["eliminated"] += 1
-                print(f"  ❌ [STAGE 2 VETO] {eval_res['top_prompt']} ({eval_res['waste_score']}%): {title[:50]}...")
+                print(f"  ❌ [{eval_res.get('stage', 'STAGE 2 VETO')}] {eval_res['top_prompt']} ({eval_res['waste_score']}%): {title[:50]}...")
             else:
                 entry = {
                     "videoId": vid,
@@ -474,12 +578,16 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
                     "categoryKey": cat,
                     "videoPageUrl": f"https://www.youtube.com/watch?v={vid}",
                     "streamQualityScore": eval_res["ambient_score"],
+                    "verificationStage": eval_res.get("stage", "Stage 2"),
                     "verifiedAt": datetime.now(timezone.utc).isoformat() + "Z"
                 }
                 approved_entries.append(entry)
                 if source_q in query_stats:
                     query_stats[source_q]["approved"] += 1
-                print(f"  ✅ [APPROVED] Ambient Score={eval_res['ambient_score']}% ({eval_res['top_prompt'][:30]}...): {title[:50]}...")
+                if rescued_by_stage_3:
+                    print(f"  ✨ [STAGE 3 RESCUED] Ambient Score={eval_res['ambient_score']}% (Motion Δ={eval_res.get('motion_delta')}): {title[:50]}...")
+                else:
+                    print(f"  ✅ [APPROVED] Ambient Score={eval_res['ambient_score']}% ({eval_res['top_prompt'][:30]}...): {title[:50]}...")
 
     # Calculate MAB yields
     for q, stats in query_stats.items():
@@ -515,6 +623,7 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
         
     total_audited = len(approved_entries) + len(eliminated_entries)
     acceptance_rate = round((len(approved_entries) / max(1, total_audited)) * 100, 1)
+    stage_3_rescues = sum(1 for e in approved_entries if e.get("verificationStage") == "Stage 3 (Video Frame Verified)")
     
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
@@ -522,6 +631,7 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
         "total_approved": len(approved_entries),
         "total_eliminated": len(eliminated_entries),
         "total_borderline": len(borderline_entries),
+        "stage_3_rescues": stage_3_rescues,
         "acceptance_rate_percent": acceptance_rate,
         "waste_threshold": waste_threshold,
         "manifest_path": manifest_path,
@@ -550,6 +660,7 @@ def run_curation_pilot(categories, candidates_per_cat=20, waste_threshold=45.0, 
         f.write(f"- **Total Audited:** `{total_audited}`\n")
         f.write(f"- **Approved (Pristine Ambient):** `{len(approved_entries)}` ({acceptance_rate}%)\n")
         f.write(f"- **Eliminated (Waste Purged):** `{len(eliminated_entries)}` ({round(100 - acceptance_rate, 1)}%)\n")
+        f.write(f"- **Stage 3 Stream Rescues:** `{stage_3_rescues}` (clean videos with noisy cover thumbnails rescued)\n")
         f.write(f"- **Decision Waste Threshold:** `{waste_threshold}%`\n")
         f.write(f"- **Borderline Cases Tracked:** `{len(borderline_entries)}`\n\n")
 
