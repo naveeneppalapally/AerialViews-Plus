@@ -31,6 +31,8 @@ class YouTubeHistoryTracker(
 
     fun themeHistory(): ArrayDeque<String> = readHistory(KEY_THEME_HISTORY)
 
+    fun categoryHistory(): ArrayDeque<String> = readHistory(KEY_CATEGORY_HISTORY)
+
     fun recentRefreshIds(): ArrayDeque<String> = readHistory(KEY_RECENT_REFRESH_IDS)
 
     /**
@@ -94,6 +96,13 @@ class YouTubeHistoryTracker(
         themes.addLast(theme)
         PlaylistOrderer.trimHistory(themes, PlaylistOrderer.MAX_THEME_HISTORY)
 
+        val categories = categoryHistory()
+        val category = entry.categoryKey.ifBlank { entry.searchQuery.orEmpty() }
+        if (category.isNotBlank()) {
+            categories.addLast(category)
+            PlaylistOrderer.trimHistory(categories, PlaylistOrderer.MAX_CATEGORY_HISTORY)
+        }
+
         val firstLaunchStillActive = isFirstLaunchActive()
         val nextFirstLaunchIndex =
             if (firstLaunchStillActive) {
@@ -105,7 +114,8 @@ class YouTubeHistoryTracker(
         sharedPreferences.edit {
             putString(KEY_PLAY_HISTORY, history.joinToString(HISTORY_SEPARATOR))
             putString(KEY_THEME_HISTORY, themes.joinToString(HISTORY_SEPARATOR))
-            putString(KEY_LAST_CATEGORY, entry.searchQuery.orEmpty())
+            putString(KEY_CATEGORY_HISTORY, categories.joinToString(HISTORY_SEPARATOR))
+            putString(KEY_LAST_CATEGORY, category)
             putString(KEY_LAST_CHANNEL, entry.uploaderName)
             putInt(KEY_FIRST_LAUNCH_INDEX, nextFirstLaunchIndex)
             putBoolean(KEY_FIRST_LAUNCH, nextFirstLaunchIndex < PlaylistOrderer.FIRST_LAUNCH_SEQUENCE.size)
@@ -146,6 +156,7 @@ class YouTubeHistoryTracker(
     companion object {
         const val KEY_PLAY_HISTORY = "yt_play_history"
         const val KEY_LAST_CATEGORY = "yt_last_category"
+        const val KEY_CATEGORY_HISTORY = "yt_category_history"
         const val KEY_THEME_HISTORY = "yt_theme_history"
         const val KEY_LAST_CHANNEL = "yt_last_channel"
         const val KEY_FIRST_LAUNCH = "yt_first_launch"

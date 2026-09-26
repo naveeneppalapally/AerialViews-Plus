@@ -40,6 +40,8 @@ internal class MediaServiceTest {
             com.neilturner.aerialviews.data.network.NetworkHelper
                 .isOnWifiOrEthernet(any())
         } returns false
+        every { context.filesDir } returns java.io.File("/tmp")
+        every { context.getDatabasePath(any()) } returns java.io.File("/tmp/test.db")
     }
 
     @AfterEach
@@ -107,6 +109,7 @@ internal class MediaServiceTest {
                         mutableListOf(
                             FakeMediaProvider(
                                 context = context,
+                                media = listOf(testMedia("apple-1", AerialMediaSource.APPLE)),
                                 tracks = emptyList(),
                             ),
                         ),
@@ -116,7 +119,7 @@ internal class MediaServiceTest {
 
             val result = service.fetchMedia()
 
-            assertEquals(0, result.mediaPlaylist.size)
+            assertEquals(1, result.mediaPlaylist.size)
             assertNull(result.musicPlaylist)
         }
 

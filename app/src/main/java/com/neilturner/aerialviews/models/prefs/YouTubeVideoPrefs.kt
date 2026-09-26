@@ -11,10 +11,10 @@ object YouTubeVideoPrefs : KotprefModel() {
     var quality by stringPref(YouTubeSourceRepository.DEFAULT_QUALITY, YouTubeSourceRepository.KEY_QUALITY)
     var mixWeight by stringPref(YouTubeSourceRepository.DEFAULT_MIX_WEIGHT, YouTubeSourceRepository.KEY_MIX_WEIGHT)
     var shuffle by booleanPref(YouTubeSourceRepository.DEFAULT_SHUFFLE, YouTubeSourceRepository.KEY_SHUFFLE)
-    var playbackLengthMode by stringPref("limit", "yt_playback_length_mode")
-    var playbackMaxMinutesStr by stringPref("30", "yt_playback_max_minutes")
+    var playbackLengthMode by stringPref("segment", "yt_playback_length_mode")
+    var playbackMaxMinutesStr by stringPref("8", "yt_playback_max_minutes")
     var playbackMaxMinutes: Int
-        get() = playbackMaxMinutesStr.toIntOrNull()?.coerceAtLeast(1) ?: 30
+        get() = playbackMaxMinutesStr.toIntOrNull()?.coerceAtLeast(1) ?: 8
         set(value) { playbackMaxMinutesStr = value.coerceAtLeast(1).toString() }
     var count by stringPref("-1", YouTubeSourceRepository.KEY_COUNT)
     var categoryNature by booleanPref(true, "yt_category_nature")

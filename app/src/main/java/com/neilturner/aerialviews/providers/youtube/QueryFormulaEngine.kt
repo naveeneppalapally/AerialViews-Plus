@@ -58,13 +58,37 @@ object QueryFormulaEngine {
         val query: String,
     )
 
+    // Native YouTube Search Parameters (Base64 Protobuf)
+    const val SP_VIDEO_4K = "EgQQAXAB"                  // Video + 4K
+    const val SP_VIDEO_4K_MEDIUM = "EgYQARgDcAE="         // Video + 4K + 4-20m Duration (Legacy)
+    const val SP_VIDEO_4K_MEDIUM_MODERN = "EgYQARgFcAE="  // Video + 4K + 3-20m Duration (Modern)
+    const val SP_VIDEO_4K_LONG = "EgYQARgCcAE="           // Video + 4K + >20m Duration
+    const val SP_VIDEO_4K_RECENT = "EgYIBRABcAE="         // Video + 4K + Uploaded This Year
+    const val SP_VIDEO_4K_VIEW_COUNT = "CAMSBBABcAE="     // Video + 4K + View Count Sort
+
+    // Core Negative Search Clusters (Strict unhyphenated single tokens, deduplicated)
+    val GLOBAL_NEGATIVE_TERMS = listOf(
+        "-vlog", "-review", "-walk", "-walking", "-talking",
+        "-guide", "-tour", "-hotel", "-resort", "-itinerary",
+        "-tips", "-podcast", "-reaction", "-sora", "-ai", "-cgi", "-render", "-demo"
+    )
+
+    val GEAR_WASTE_NEGATIVE_TERMS = listOf(
+        "-test", "-tutorial", "-lut", "-luts", "-settings",
+        "-bts", "-setup", "-vs", "-unboxing", "-commercial", "-oled"
+    )
+
     private data class CategoryConfig(
         val queryCategory: QueryCategory,
         val queries: List<String>,
         val titleKeywords: Set<String>,
         val preferredTitleKeywords: Set<String> = emptySet(),
         val uploaderKeywords: Set<String> = emptySet(),
+        val defaultSp: String = SP_VIDEO_4K_MEDIUM,
     )
+
+    fun getSpForCategory(category: ContentCategory): String =
+        categoryConfigs[category]?.defaultSp ?: SP_VIDEO_4K_MEDIUM
 
     /**
      * Anchored combinatorial queries: subject x anchor x constraint, prefixed
@@ -76,16 +100,18 @@ object QueryFormulaEngine {
         subjects: List<String>,
         anchors: List<String>,
         constraints: List<String>,
+        negativeTerms: List<String> = GLOBAL_NEGATIVE_TERMS,
     ): List<String> {
         if (subjects.isEmpty() || anchors.isEmpty() || constraints.isEmpty()) {
             return emptyList()
         }
+        val negativeSuffix = if (negativeTerms.isNotEmpty()) " ${negativeTerms.distinct().joinToString(" ")}" else ""
         val total = subjects.size * anchors.size * constraints.size
         return List(total) { index ->
             val subject = subjects[index % subjects.size]
             val anchor = anchors[(index / subjects.size) % anchors.size]
             val constraint = constraints[(index / (subjects.size * anchors.size)) % constraints.size]
-            "4k $subject $anchor $constraint"
+            "4k $subject $anchor $constraint$negativeSuffix"
         }
     }
 
@@ -204,6 +230,7 @@ object QueryFormulaEngine {
             ContentCategory.NATURE to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -213,23 +240,34 @@ object QueryFormulaEngine {
                                     "river gorge",
                                     "waterfall",
                                     "alpine meadow",
-                                    "canyon"
+                                    "canyon plateau",
+                                    "desert sand dunes",
+                                    "arid sandstone oasis"
                                 ),
                             anchors =
                                 listOf(
-                                    "pacific northwest",
-                                    "swiss alps",
-                                    "rocky mountains",
-                                    "iceland",
-                                    "patagonia"
+                                    "Hoh Rain Forest",
+                                    "Jiuzhaigou",
+                                    "Yakushima",
+                                    "Val di Funes",
+                                    "Vatnajökull",
+                                    "Torres del Paine",
+                                    "Olympic Peninsula",
+                                    "Monteverde",
+                                    "Athabasca",
+                                    "Plitvice",
+                                    "Sossusvlei Namib",
+                                    "Atacama Valle de la Luna",
+                                    "Lençóis Maranhenses"
                                 ),
                             constraints =
                                 listOf(
                                     "real footage no talking",
-                                    "timelapse no music",
+                                    "ambient sound 4k",
                                     "documentary 4k",
                                     "cinematic landscape"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-safari", "-tour", "-atv", "-dune bashing"),
                         ),
                     titleKeywords =
                         setOf(
@@ -245,6 +283,9 @@ object QueryFormulaEngine {
                             "national park",
                             "trail",
                             "alpine",
+                            "desert",
+                            "dunes",
+                            "sand dunes",
                         ),
                     preferredTitleKeywords =
                         setOf(
@@ -252,11 +293,14 @@ object QueryFormulaEngine {
                             "documentary",
                             "nature film",
                             "national park",
+                            "desert",
+                            "dunes",
                         ),
                 ),
             ContentCategory.ANIMALS to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -265,23 +309,26 @@ object QueryFormulaEngine {
                                     "birds documentary",
                                     "marine life",
                                     "arctic animals",
-                                    "forest wildlife"
+                                    "forest wildlife",
+                                    "savanna wildlife"
                                 ),
                             anchors =
                                 listOf(
-                                    "elephants lions",
-                                    "whales dolphins",
-                                    "penguins seals",
-                                    "deer bears",
-                                    "savanna plains"
+                                    "Serengeti",
+                                    "Masai Mara",
+                                    "Okavango Delta",
+                                    "Svalbard",
+                                    "Galapagos",
+                                    "Pantanal"
                                 ),
                             constraints =
                                 listOf(
                                     "real footage no talking",
-                                    "national geographic 4k",
                                     "documentary 4k",
-                                    "cinematic wildlife"
+                                    "cinematic wildlife",
+                                    "natural sound 4k"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-zoo", "-pet", "-hunting", "-hunter", "-cartoon"),
                         ),
                     titleKeywords =
                         setOf(
@@ -312,32 +359,45 @@ object QueryFormulaEngine {
             ContentCategory.DRONE to
                 CategoryConfig(
                     queryCategory = QueryCategory.AERIAL,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
                                 listOf(
                                     "drone landscape",
                                     "aerial coastline",
-                                    "fpv flyover",
                                     "bird's eye view",
                                     "drone fjord",
-                                    "mountain flyover"
+                                    "mountain flyover",
+                                    "cinematic aerial",
+                                    "DJI Inspire 3 aerial",
+                                    "Mavic 3 Cine ProRes",
+                                    "desert dune flyover",
+                                    "sandstone canyon aerial"
                                 ),
                             anchors =
                                 listOf(
-                                    "norway",
-                                    "iceland",
-                                    "switzerland",
-                                    "hawaii",
-                                    "dolomites"
+                                    "Geirangerfjord",
+                                    "Lofoten",
+                                    "Landmannalaugar",
+                                    "Lauterbrunnen",
+                                    "Dolomites",
+                                    "Na Pali Coast",
+                                    "Raja Ampat",
+                                    "Senja",
+                                    "Madeira",
+                                    "Milford Sound",
+                                    "Rub al Khali dunes",
+                                    "Namib-Naukluft aerial"
                                 ),
                             constraints =
                                 listOf(
-                                    "4k no music",
                                     "cinematic 4k",
+                                    "slow flyover",
                                     "real footage",
-                                    "slow flyover"
+                                    "4k no music"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + GEAR_WASTE_NEGATIVE_TERMS,
                         ),
                     titleKeywords =
                         setOf(
@@ -349,6 +409,8 @@ object QueryFormulaEngine {
                             "bird's eye",
                             "uav",
                             "cinematic aerial",
+                            "dune flyover",
+                            "desert aerial",
                         ),
                     preferredTitleKeywords =
                         setOf(
@@ -362,6 +424,7 @@ object QueryFormulaEngine {
             ContentCategory.OCEAN to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -375,10 +438,14 @@ object QueryFormulaEngine {
                                 ),
                             anchors =
                                 listOf(
-                                    "pacific ocean",
-                                    "caribbean",
-                                    "mediterranean",
-                                    "atlantic coast"
+                                    "Raja Ampat",
+                                    "Bora Bora",
+                                    "Maldives",
+                                    "Great Barrier Reef",
+                                    "Fernando de Noronha",
+                                    "Seychelles",
+                                    "Whitsundays",
+                                    "Bonaire"
                                 ),
                             constraints =
                                 listOf(
@@ -387,6 +454,7 @@ object QueryFormulaEngine {
                                     "documentary 4k",
                                     "relaxing real footage"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-surfing", "-surfer", "-shark", "-cruise", "-party"),
                         ),
                     titleKeywords =
                         setOf(
@@ -414,6 +482,7 @@ object QueryFormulaEngine {
             ContentCategory.SPACE to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_LONG,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -422,22 +491,23 @@ object QueryFormulaEngine {
                                     "iss earth view",
                                     "milky way night sky",
                                     "aurora borealis",
-                                    "moon surface orbit",
-                                    "deep space nebula"
+                                    "deep space nebula",
+                                    "bioluminescent night ocean"
                                 ),
                             anchors =
                                 listOf(
-                                    "nasa",
                                     "international space station",
-                                    "satellite timelapse",
-                                    "hubble james webb"
+                                    "hubble james webb",
+                                    "Atacama dark sky",
+                                    "Aoraki Mackenzie dark sky"
                                 ),
                             constraints =
                                 listOf(
-                                    "timelapse no music",
+                                    "ambient sound no music",
                                     "real footage 4k",
                                     "cinematic 4k"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-ufo", "-alien", "-conspiracy", "-scifi", "-animation"),
                         ),
                     titleKeywords =
                         setOf(
@@ -452,6 +522,9 @@ object QueryFormulaEngine {
                             "stars",
                             "moonrise",
                             "space station",
+                            "dark sky",
+                            "astrophotography",
+                            "bioluminescence",
                         ),
                     preferredTitleKeywords =
                         setOf(
@@ -461,12 +534,15 @@ object QueryFormulaEngine {
                             "milky way",
                             "aurora",
                             "northern lights",
+                            "dark sky",
+                            "astrophotography",
                         ),
                     uploaderKeywords = setOf("nasa", "esa"),
                 ),
             ContentCategory.CITIES to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -495,9 +571,10 @@ object QueryFormulaEngine {
                                 ),
                             constraints =
                                 listOf(
-                                    "timelapse no music",
-                                    "4k real footage"
+                                    "real footage",
+                                    "cinematic 4k"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-food", "-streetfood", "-shopping", "-traffic"),
                         ),
                     titleKeywords =
                         setOf(
@@ -526,6 +603,7 @@ object QueryFormulaEngine {
             ContentCategory.WEATHER to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_LONG,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -545,11 +623,12 @@ object QueryFormulaEngine {
                                 ),
                             constraints =
                                 listOf(
-                                    "timelapse 4k",
                                     "real footage no music",
                                     "ambient sound",
-                                    "nature documentary"
+                                    "nature documentary",
+                                    "calm rain natural sound"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-damage", "-disaster", "-tornado", "-destruction", "-loop"),
                         ),
                     titleKeywords =
                         setOf(
@@ -575,6 +654,7 @@ object QueryFormulaEngine {
             ContentCategory.WINTER to
                 CategoryConfig(
                     queryCategory = QueryCategory.NATURE,
+                    defaultSp = SP_VIDEO_4K_MEDIUM,
                     queries =
                         buildMatrixQueries(
                             subjects =
@@ -583,22 +663,26 @@ object QueryFormulaEngine {
                                     "frozen lake ice",
                                     "snowfall landscape",
                                     "glacier icebergs",
-                                    "snowy mountain valley"
+                                    "snowy mountain valley",
+                                    "arctic frozen tundra"
                                 ),
                             anchors =
                                 listOf(
-                                    "arctic",
-                                    "alps",
-                                    "norway",
-                                    "iceland"
+                                    "Arctic",
+                                    "Alps",
+                                    "Norway",
+                                    "Iceland",
+                                    "Lofoten",
+                                    "Lapland"
                                 ),
                             constraints =
                                 listOf(
                                     "4k no music",
                                     "real footage",
                                     "documentary 4k",
-                                    "ambient 4k"
+                                    "peaceful snowfall"
                                 ),
+                            negativeTerms = GLOBAL_NEGATIVE_TERMS + listOf("-ski", "-snowboard", "-resort", "-cabin", "-chalet"),
                         ),
                     titleKeywords =
                         setOf(
@@ -796,31 +880,67 @@ object QueryFormulaEngine {
                 QueryCategory.NATURE
             }
 
+    private fun stripNegativeTerms(query: String): String =
+        query.split(" ").filterNot { it.startsWith("-") }.joinToString(" ").trim()
+
+    private val queryToCategoryExactMap: Map<String, ContentCategory> by lazy {
+        val map = HashMap<String, ContentCategory>(4096)
+        categoryConfigs.forEach { (category, config) ->
+            config.queries.forEach { configuredQuery ->
+                val normConfig = configuredQuery.lowercase()
+                val sanitConfig = sanitizeQueryForAmbientPlayback(configuredQuery).lowercase()
+                val strippedConfig = stripNegativeTerms(normConfig)
+                val strippedSanitConfig = stripNegativeTerms(sanitConfig)
+
+                map.putIfAbsent(normConfig, category)
+                map.putIfAbsent(sanitConfig, category)
+                map.putIfAbsent(strippedConfig, category)
+                map.putIfAbsent(strippedSanitConfig, category)
+            }
+        }
+        map
+    }
+
+    private val queryPrefixesByCategory: List<Pair<String, ContentCategory>> by lazy {
+        val prefixes = ArrayList<Pair<String, ContentCategory>>(4096)
+        categoryConfigs.forEach { (category, config) ->
+            config.queries.forEach { configuredQuery ->
+                val normConfig = configuredQuery.lowercase()
+                val sanitConfig = sanitizeQueryForAmbientPlayback(configuredQuery).lowercase()
+                val strippedConfig = stripNegativeTerms(normConfig)
+                val strippedSanitConfig = stripNegativeTerms(sanitConfig)
+
+                prefixes.add("$normConfig " to category)
+                if (sanitConfig != normConfig) {
+                    prefixes.add("$sanitConfig " to category)
+                }
+                if (strippedConfig != normConfig && strippedConfig != sanitConfig) {
+                    prefixes.add("$strippedConfig " to category)
+                }
+                if (strippedSanitConfig != strippedConfig && strippedSanitConfig != sanitConfig && strippedSanitConfig != normConfig) {
+                    prefixes.add("$strippedSanitConfig " to category)
+                }
+            }
+        }
+        prefixes.distinctBy { it.first }.sortedByDescending { it.first.length }
+    }
+
     fun categoryForQuery(query: String): ContentCategory? {
         val normalizedQuery = query.trim().lowercase()
         if (normalizedQuery.isBlank()) {
             return null
         }
 
-        // Exact match against raw and sanitized configured queries: the pool
-        // is sanitized after selection (timelapse->real footage, fpv->cinematic
-        // aerial, ...), so a sanitized variant must still map to its category.
-        categoryConfigs.entries.firstOrNull { (_, config) ->
-            config.queries.any { configuredQuery ->
-                normalizedQuery == configuredQuery.lowercase() ||
-                    normalizedQuery == sanitizeQueryForAmbientPlayback(configuredQuery).lowercase()
-            }
-        }?.key?.let { return it }
+        val strippedQuery = stripNegativeTerms(normalizedQuery)
 
-        // Most generated variants append suffixes to base queries; map by prefix to keep category ownership.
-        categoryConfigs.entries.firstOrNull { (_, config) ->
-            config.queries.any { configuredQuery ->
-                val normalizedConfigured = configuredQuery.lowercase()
-                val sanitizedConfigured = sanitizeQueryForAmbientPlayback(configuredQuery).lowercase()
-                normalizedQuery.startsWith("$normalizedConfigured ") ||
-                    (sanitizedConfigured != normalizedConfigured && normalizedQuery.startsWith("$sanitizedConfigured "))
-            }
-        }?.key?.let { return it }
+        // 1. O(1) fast path: exact match against precomputed raw, sanitized, and stripped configured queries
+        queryToCategoryExactMap[normalizedQuery]?.let { return it }
+        queryToCategoryExactMap[strippedQuery]?.let { return it }
+
+        // 2. Fast prefix match for queries with appended variation tokens
+        queryPrefixesByCategory.firstOrNull { (prefix, _) ->
+            normalizedQuery.startsWith(prefix) || strippedQuery.startsWith(prefix)
+        }?.second?.let { return it }
 
         val inferredByKeywords =
             categoryConfigs.entries
@@ -963,7 +1083,16 @@ object QueryFormulaEngine {
                     return@forEach
                 }
 
-                expandedQueries += "$query $suffixToken"
+                val firstNegativeIndex = query.indexOf(" -")
+                val expanded = if (firstNegativeIndex != -1) {
+                    val positivePart = query.substring(0, firstNegativeIndex).trim()
+                    val negativePart = query.substring(firstNegativeIndex).trim()
+                    "$positivePart $suffixToken $negativePart"
+                } else {
+                    "$query $suffixToken"
+                }
+
+                expandedQueries += expanded
                 if (expandedQueries.size >= count) {
                     return expandedQueries.take(count)
                 }

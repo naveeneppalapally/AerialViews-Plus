@@ -176,7 +176,13 @@ class VideoPlayerView
 
                     Log.i("VideoPlayerView", "Preparing media source: ${playableMedia.uri}")
                     configureTrackSelection(playableMedia)
-                    val initialStartPositionMs = computeInitialYouTubeStartPosition(playableMedia)
+                    if (playableMedia.source == AerialMediaSource.YOUTUBE) {
+                        val playbackParams = VideoPlayerHelper.calculatePlaybackParameters(exoPlayer, playableMedia, GeneralPrefs)
+                        state.startPosition = playbackParams.first
+                        state.endPosition = playbackParams.second
+                    }
+                    val initialStartPositionMs =
+                        if (state.startPosition > 0L) state.startPosition else computeInitialYouTubeStartPosition(playableMedia)
                     if (initialStartPositionMs > 0L) {
                         Log.i("VideoPlayerView", "Applying initial YouTube start during prepare: ${initialStartPositionMs.milliseconds}")
                     }
@@ -309,9 +315,11 @@ class VideoPlayerView
                 // Waiting for... https://youtrack.jetbrains.com/issue/KT-19627/Object-name-based-destructuring
                 val currentMedia = state.currentMedia
                 if (currentMedia != null) {
-                    val result = VideoPlayerHelper.calculatePlaybackParameters(exoPlayer, currentMedia, GeneralPrefs)
-                    state.startPosition = result.first
-                    state.endPosition = result.second
+                    if (state.endPosition <= 0L) {
+                        val result = VideoPlayerHelper.calculatePlaybackParameters(exoPlayer, currentMedia, GeneralPrefs)
+                        state.startPosition = result.first
+                        state.endPosition = result.second
+                    }
                     state.startPosition = adjustYouTubeStartForIntroSkip(state.startPosition, state.endPosition)
                 }
 
@@ -790,6 +798,12 @@ class VideoPlayerView
 
             val playableDuration = (endPosition - startPosition).coerceAtLeast(0L)
             if (playableDuration < YOUTUBE_INTRO_SKIP_MIN_DURATION_MS) {
+                return startPosition
+            }
+
+            // If startPosition is already at or past the intro skip threshold,
+            // the intro is already bypassed (e.g. by random segment selection).
+            if (startPosition >= YOUTUBE_INTRO_SKIP_MS) {
                 return startPosition
             }
 

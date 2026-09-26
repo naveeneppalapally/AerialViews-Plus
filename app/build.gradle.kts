@@ -258,6 +258,8 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    jvmArgs("-XX:+EnableDynamicAgentLoading", "-Xmx1024m")
     testLogging {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         events("started", "skipped", "passed", "failed")

@@ -15,16 +15,19 @@ object PlaylistOrderer {
         val relaxedVideoIds: Set<String>,
         val recentThemes: Set<String>,
         val lastChannel: String,
+        val recentCategories: Set<String> = emptySet(),
     ) {
         constructor(
             playbackHistory: List<String>,
             recentThemes: List<String>,
             lastChannel: String,
+            recentCategories: List<String> = emptyList(),
         ) : this(
             strictVideoIds = playbackHistory.takeLast(LAST_VIDEO_EXCLUSION_COUNT).toSet(),
             relaxedVideoIds = playbackHistory.takeLast(RELAXED_LAST_VIDEO_EXCLUSION_COUNT).toSet(),
             recentThemes = recentThemes.takeLast(LAST_THEME_EXCLUSION_COUNT).toSet(),
             lastChannel = lastChannel.trim(),
+            recentCategories = recentCategories.takeLast(LAST_CATEGORY_EXCLUSION_COUNT).filter { it.isNotBlank() }.toSet(),
         )
     }
 
@@ -35,6 +38,7 @@ object PlaylistOrderer {
         var firstLaunchActive: Boolean,
         var firstLaunchIndex: Int,
         val random: Random,
+        val categoryHistory: ArrayDeque<String> = ArrayDeque(),
     ) {
         fun record(
             entry: YouTubeCacheEntity,
@@ -44,6 +48,10 @@ object PlaylistOrderer {
             trimHistory(history, MAX_PLAY_HISTORY)
             themeHistory.addLast(theme)
             trimHistory(themeHistory, MAX_THEME_HISTORY)
+            if (entry.categoryKey.isNotBlank()) {
+                categoryHistory.addLast(entry.categoryKey)
+                trimHistory(categoryHistory, MAX_CATEGORY_HISTORY)
+            }
             lastChannel = entry.uploaderName
             if (firstLaunchActive) {
                 firstLaunchIndex += 1
@@ -92,9 +100,11 @@ object PlaylistOrderer {
         excludedVideoIds: Set<String>,
         excludedThemes: Set<String>,
         excludedChannel: String,
+        excludedCategories: Set<String> = emptySet(),
     ): List<YouTubeCacheEntity> =
         entries.filter { entry ->
             entry.videoId !in excludedVideoIds &&
+                (excludedCategories.isEmpty() || entry.categoryKey.isBlank() || entry.categoryKey !in excludedCategories) &&
                 (excludedThemes.isEmpty() || detectTheme(entry.title) !in excludedThemes) &&
                 (excludedChannel.isBlank() || !entry.uploaderName.equals(excludedChannel, ignoreCase = true))
         }
@@ -109,9 +119,22 @@ object PlaylistOrderer {
                 excludedVideoIds = exclusions.strictVideoIds,
                 excludedThemes = exclusions.recentThemes,
                 excludedChannel = exclusions.lastChannel,
+                excludedCategories = exclusions.recentCategories,
             )
         if (strictCandidates.size >= MIN_STRICT_PLAYBACK_CANDIDATES) {
             return strictCandidates
+        }
+
+        val categoryRelaxedCandidates =
+            applyPlaybackExclusions(
+                entries = entries,
+                excludedVideoIds = exclusions.strictVideoIds,
+                excludedThemes = exclusions.recentThemes,
+                excludedChannel = exclusions.lastChannel,
+                excludedCategories = emptySet(),
+            )
+        if (categoryRelaxedCandidates.size >= MIN_STRICT_PLAYBACK_CANDIDATES) {
+            return categoryRelaxedCandidates
         }
 
         val themeRelaxedCandidates =
@@ -120,6 +143,7 @@ object PlaylistOrderer {
                 excludedVideoIds = exclusions.strictVideoIds,
                 excludedThemes = emptySet(),
                 excludedChannel = exclusions.lastChannel,
+                excludedCategories = emptySet(),
             )
         if (themeRelaxedCandidates.size >= MIN_STRICT_PLAYBACK_CANDIDATES) {
             return themeRelaxedCandidates
@@ -131,6 +155,7 @@ object PlaylistOrderer {
                 excludedVideoIds = exclusions.strictVideoIds,
                 excludedThemes = emptySet(),
                 excludedChannel = "",
+                excludedCategories = emptySet(),
             )
 
         return when {
@@ -140,10 +165,39 @@ object PlaylistOrderer {
         }
     }
 
+    fun getCircadianWeightMultiplier(
+        categoryKey: String,
+        theme: String,
+        hourOfDay: Int,
+    ): Int {
+        if (hourOfDay !in 0..23) return 1
+        val cat = categoryKey.lowercase()
+        val thm = theme.lowercase()
+        return when (hourOfDay) {
+            in 6..11 -> {
+                // Morning (06:00 - 11:59): Awakening, dawn, mist, forests, sunrise aerials
+                if (cat in listOf("nature", "drone") || thm in listOf("forest", "mountain", "japan")) 2 else 1
+            }
+            in 12..17 -> {
+                // Afternoon (12:00 - 17:59): High sun, vibrant oceans, active wildlife
+                if (cat in listOf("ocean", "animals", "nature") || thm in listOf("ocean", "forest", "desert")) 2 else 1
+            }
+            in 18..21 -> {
+                // Evening (18:00 - 21:59): Golden hour, twilight skylines, traffic light trails
+                if (cat in listOf("cities", "drone") || thm in listOf("city", "japan")) 2 else 1
+            }
+            else -> {
+                // Night (22:00 - 05:59): Serene dark skies, Earth at night, aurora, OLED-friendly low APL
+                if (cat in listOf("space", "weather") || thm in listOf("space", "weather")) 2 else 1
+            }
+        }
+    }
+
     fun weightedRandomPick(
         entries: List<YouTubeCacheEntity>,
         playbackHistory: List<String>,
         random: Random,
+        hourOfDay: Int = -1,
     ): YouTubeCacheEntity? {
         if (entries.isEmpty()) {
             return null
@@ -152,13 +206,19 @@ object PlaylistOrderer {
         val candidates =
             entries.map { entry ->
                 val playCount = playbackHistory.count { it == entry.videoId }
-                val weight =
+                val baseWeight =
                     when {
                         playCount == 0 -> UNPLAYED_WEIGHT
                         playCount == 1 -> SINGLE_PLAY_WEIGHT
                         else -> REPEAT_WEIGHT
                     }
-                entry to weight
+                val circadianMultiplier =
+                    getCircadianWeightMultiplier(
+                        categoryKey = entry.categoryKey,
+                        theme = detectTheme(entry.title),
+                        hourOfDay = hourOfDay,
+                    )
+                entry to (baseWeight * circadianMultiplier)
             }
 
         val totalWeight = candidates.sumOf { (_, weight) -> weight }.coerceAtLeast(1)
@@ -216,6 +276,8 @@ object PlaylistOrderer {
         firstLaunchSequenceIndex: Int,
         recentPlaybackCutoff: Long,
         random: Random,
+        recentCategories: List<String> = emptyList(),
+        hourOfDay: Int = -1,
     ): YouTubeCacheEntity? {
         val goodEntries = entries.filterNot { it.isBad }
         if (goodEntries.isEmpty()) {
@@ -225,7 +287,7 @@ object PlaylistOrderer {
         val repeatWindowCandidates = applyRepeatWindow(goodEntries, recentPlaybackCutoff)
         val baseEntries = repeatWindowCandidates.ifEmpty { goodEntries }
 
-        val exclusions = PlaybackExclusions(playbackHistory, recentThemes, lastChannel)
+        val exclusions = PlaybackExclusions(playbackHistory, recentThemes, lastChannel, recentCategories)
 
         if (firstLaunchActive && baseEntries.size >= MIN_FIRST_LAUNCH_CANDIDATES) {
             getFirstLaunchVideo(baseEntries, firstLaunchSequenceIndex, exclusions.strictVideoIds, random)?.let { return it }
@@ -237,15 +299,17 @@ object PlaylistOrderer {
                 finalCandidates.filterNot { it.videoId == lastPlayedVideoId }.ifEmpty { finalCandidates }
             } ?: finalCandidates
 
-        return weightedRandomPick(immediateRepeatSafeCandidates, playbackHistory, random)
+        return weightedRandomPick(immediateRepeatSafeCandidates, playbackHistory, random, hourOfDay)
     }
 
     const val MAX_PLAY_HISTORY = 320
     const val MAX_THEME_HISTORY = 12
+    const val MAX_CATEGORY_HISTORY = 10
     const val MIN_FIRST_LAUNCH_CANDIDATES = 12
     const val LAST_VIDEO_EXCLUSION_COUNT = 50
     const val RELAXED_LAST_VIDEO_EXCLUSION_COUNT = 30
     const val LAST_THEME_EXCLUSION_COUNT = 3
+    const val LAST_CATEGORY_EXCLUSION_COUNT = 1
     const val MIN_STRICT_PLAYBACK_CANDIDATES = 10
     const val UNPLAYED_WEIGHT = 3
     const val SINGLE_PLAY_WEIGHT = 2

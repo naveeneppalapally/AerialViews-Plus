@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.core.content.edit
 import java.util.ArrayDeque
+import java.util.Calendar
 import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -2037,6 +2038,8 @@ class YouTubeSourceRepository(
             firstLaunchSequenceIndex = simulation.firstLaunchIndex,
             recentPlaybackCutoff = recentPlaybackCutoff(),
             random = simulation.random,
+            recentCategories = simulation.categoryHistory.toList(),
+            hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
         ) ?: entries.random(simulation.random)
 
     private suspend fun selectEntryForPlayback(entries: List<YouTubeCacheEntity>): YouTubeCacheEntity? {
@@ -2069,6 +2072,8 @@ class YouTubeSourceRepository(
             firstLaunchSequenceIndex = firstLaunchSequenceIndex,
             recentPlaybackCutoff = recentPlaybackCutoff(),
             random = random,
+            recentCategories = categoryHistory().toList(),
+            hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
         ) ?: cacheDao.getUnwatchedEntry(recentPlaybackCutoff())
             ?: cacheDao.getLeastRecentlyPlayed()
 
@@ -2079,6 +2084,8 @@ class YouTubeSourceRepository(
         entries.size < TARGET_CACHE_SIZE
 
     private suspend fun playHistory(): ArrayDeque<String> = historyTracker.playHistory()
+
+    private fun categoryHistory(): ArrayDeque<String> = historyTracker.categoryHistory()
 
     private fun recentRefreshIds(): ArrayDeque<String> = historyTracker.recentRefreshIds()
 

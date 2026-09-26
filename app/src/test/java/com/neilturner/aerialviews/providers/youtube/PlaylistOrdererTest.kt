@@ -157,12 +157,85 @@ internal class PlaylistOrdererTest {
         assertEquals(1, simulation.firstLaunchIndex)
     }
 
+    @Test
+    @DisplayName("Should exclude the just-played category when alternatives exist")
+    fun testCategoryInterleaving() {
+        val entries =
+            (1..12).map { index ->
+                entry("videoOcean$index", "Ocean waves coral reef $index", categoryKey = "ocean")
+            } + listOf(
+                entry("videoDroneA", "Drone mountain flight", categoryKey = "drone"),
+                entry("videoDroneB", "Drone forest valley", categoryKey = "drone"),
+            )
+
+        val picked =
+            PlaylistOrderer.pickCandidate(
+                entries = entries,
+                playbackHistory = emptyList(),
+                recentThemes = emptyList(),
+                lastChannel = "",
+                firstLaunchActive = false,
+                firstLaunchSequenceIndex = 0,
+                recentPlaybackCutoff = 0L,
+                random = Random(0),
+                recentCategories = listOf("drone"),
+            )
+
+        assertTrue(picked != null && picked.categoryKey == "ocean", "Expected category interleaving to pick ocean instead of drone")
+    }
+
+    @Test
+    @DisplayName("Should boost weights according to circadian hour of day")
+    fun testCircadianWeightMultiplier() {
+        // Morning (8 AM)
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("drone", "mountain", hourOfDay = 8))
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("nature", "forest", hourOfDay = 8))
+        assertEquals(1, PlaylistOrderer.getCircadianWeightMultiplier("space", "space", hourOfDay = 8))
+
+        // Afternoon (2 PM / 14:00)
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("ocean", "ocean", hourOfDay = 14))
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("animals", "other", hourOfDay = 14))
+        assertEquals(1, PlaylistOrderer.getCircadianWeightMultiplier("cities", "city", hourOfDay = 14))
+
+        // Evening (7 PM / 19:00)
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("cities", "city", hourOfDay = 19))
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("drone", "japan", hourOfDay = 19))
+        assertEquals(1, PlaylistOrderer.getCircadianWeightMultiplier("animals", "other", hourOfDay = 19))
+
+        // Night (11 PM / 23:00)
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("space", "space", hourOfDay = 23))
+        assertEquals(2, PlaylistOrderer.getCircadianWeightMultiplier("weather", "weather", hourOfDay = 23))
+        assertEquals(1, PlaylistOrderer.getCircadianWeightMultiplier("ocean", "ocean", hourOfDay = 23))
+
+        // Disabled (-1)
+        assertEquals(1, PlaylistOrderer.getCircadianWeightMultiplier("space", "space", hourOfDay = -1))
+    }
+
+    @Test
+    @DisplayName("Simulation record should advance category history")
+    fun testSimulationRecordCategory() {
+        val simulation =
+            PlaylistOrderer.PlaylistSimulation(
+                history = ArrayDeque(),
+                themeHistory = ArrayDeque(),
+                lastChannel = "",
+                firstLaunchActive = false,
+                firstLaunchIndex = 0,
+                random = Random(0),
+            )
+
+        simulation.record(entry("videoDrone", "Drone flight", categoryKey = "drone"), "mountain")
+
+        assertTrue(simulation.categoryHistory.contains("drone"))
+    }
+
     private fun entry(
         videoId: String,
         title: String,
         uploader: String = "Some Channel",
         lastPlayedAt: Long = 0L,
         isBad: Boolean = false,
+        categoryKey: String = "nature",
     ): YouTubeCacheEntity =
         YouTubeCacheEntity(
             videoId = videoId,
@@ -171,7 +244,7 @@ internal class PlaylistOrdererTest {
             title = title,
             uploaderName = uploader,
             durationSeconds = 600,
-            categoryKey = "nature",
+            categoryKey = categoryKey,
             streamUrlExpiresAt = System.currentTimeMillis() + 86_400_000L,
             searchCachedAt = System.currentTimeMillis(),
             searchQuery = "4K aerial nature ambient",

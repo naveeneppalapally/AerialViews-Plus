@@ -51,6 +51,8 @@ import kotlin.time.Duration.Companion.milliseconds
 
 object VideoPlayerHelper {
     private const val TEN_SECONDS = 10 * 1000
+    private const val INTRO_SKIP_MS = 30_000L
+    private const val OUTRO_GUARD_MS = 20_000L
     private const val VIVID_SATURATION = 1.35f
     private const val VIVID_LIGHTNESS = 0.02f
     private const val VIVID_CONTRAST = 0.08f
@@ -445,7 +447,7 @@ object VideoPlayerHelper {
                 PlaybackPolicy(
                     maxVideoLengthMs = youtubeMaxLengthMs,
                     limitMode = LimitLongerVideos.SEGMENT,
-                    randomStartEnabled = false,
+                    randomStartEnabled = true,
                 )
             else ->
                 PlaybackPolicy(
@@ -484,27 +486,29 @@ object VideoPlayerHelper {
         maxLength: Long,
     ): Pair<Long, Long> {
         if (duration <= 0 || maxLength < TEN_SECONDS) {
-            Timber.e("Invalid duration or max length: duration=$duration, maxLength=$maxLength%")
+            Timber.e("Invalid duration or max length: duration=$duration, maxLength=$maxLength")
+            return Pair(0, duration.coerceAtLeast(0L))
         }
 
-        val numOfSegments = duration / maxLength
-        if (numOfSegments < 2) {
-            Timber.i("Video too short for segments")
+        val effectiveMax = maxLength.coerceAtMost(duration)
+        val totalGuards = INTRO_SKIP_MS + OUTRO_GUARD_MS
+
+        if (duration > effectiveMax + totalGuards) {
+            val minStart = INTRO_SKIP_MS
+            val maxStart = duration - effectiveMax - OUTRO_GUARD_MS
+            val randomStart = Random.nextLong(minStart, maxStart + 1L)
+            val segmentEnd = randomStart + effectiveMax
+            Timber.i("Fluid random segment: ${randomStart.milliseconds} - ${segmentEnd.milliseconds} (duration: ${duration.milliseconds}, max: ${effectiveMax.milliseconds})")
+            return Pair(randomStart, segmentEnd)
+        } else if (duration > totalGuards) {
+            val segmentStart = INTRO_SKIP_MS
+            val segmentEnd = (duration - OUTRO_GUARD_MS).coerceAtLeast(segmentStart)
+            Timber.i("Protected window segment: ${segmentStart.milliseconds} - ${segmentEnd.milliseconds} (duration: ${duration.milliseconds})")
+            return Pair(segmentStart, segmentEnd)
+        } else {
+            Timber.i("Short video, playing full: 0 - ${duration.milliseconds}")
             return Pair(0, duration)
         }
-
-        val length = duration.floorDiv(numOfSegments)
-        val randomSegment = (1..numOfSegments).random()
-        val segmentStart = (randomSegment - 1) * length
-        val segmentEnd = randomSegment * length
-
-        val message1 =
-            "Video length ${duration.milliseconds}, $numOfSegments segments of ${length.milliseconds}\n"
-        val message2 =
-            "Chose segment $randomSegment, ${segmentStart.milliseconds} - ${segmentEnd.milliseconds}"
-        Timber.i("$message1$message2")
-
-        return Pair(segmentStart, segmentEnd)
     }
 
     private fun getWebDavValidateSslFromUri(uri: android.net.Uri): Boolean {

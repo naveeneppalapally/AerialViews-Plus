@@ -106,3 +106,8 @@ lint/tmp/
 
 # Secrets file for Act
 .secrets
+
+# ML Curation and Python artifacts
+curation_output/
+__pycache__/
+*.pyc

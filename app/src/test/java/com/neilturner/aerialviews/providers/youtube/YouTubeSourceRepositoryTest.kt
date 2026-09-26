@@ -481,13 +481,38 @@ internal class YouTubeSourceRepositoryTest {
                 }.toMutableList()
             val cacheDao = FakeYouTubeCacheDao(seeded)
             val prefs = freshPrefs()
+            val categoryAwareSearcher =
+                object : VideoSearcher {
+                    override suspend fun searchVideos(
+                        query: String,
+                        category: QueryFormulaEngine.ContentCategory?,
+                    ): List<StreamInfoItem> {
+                        val ids =
+                            if (category == QueryFormulaEngine.ContentCategory.DRONE) {
+                                (1..5).map { "shared$it" }
+                            } else {
+                                (1..5).map { "shared$it" } + (1..5).map { "fresh$it" }
+                            }
+                        return ids.map { videoId ->
+                            StreamInfoItem(
+                                0,
+                                "https://www.youtube.com/watch?v=$videoId",
+                                "Ambient video $videoId",
+                                StreamType.VIDEO_STREAM,
+                            ).apply {
+                                uploaderName = "Channel $videoId"
+                                setDuration(600L)
+                            }
+                        }
+                    }
+                }
             val repository =
                 YouTubeSourceRepository(
                     context = mockPackageContext(),
                     cacheDao = cacheDao,
                     watchHistoryDao = FakeYouTubeWatchHistoryDao(),
                     sharedPreferences = prefs,
-                    searcher = FixedIdSearcher((1..5).map { "shared$it" } + (1..5).map { "fresh$it" }),
+                    searcher = categoryAwareSearcher,
                     extractor = FakeStreamExtractor(),
                 )
 

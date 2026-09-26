@@ -139,4 +139,71 @@ internal class QueryFormulaEngineTest {
 
         assertEquals(3, queries.size)
     }
+
+    @Test
+    @DisplayName("Generated queries should include negative exclusion terms")
+    fun testGeneratedQueriesIncludeNegativeExclusionTerms() {
+        val sharedPreferences = InMemorySharedPreferences(mutableMapOf())
+        val queries =
+            QueryFormulaEngine.generateRingQueryPool(
+                count = 10,
+                prefs = QueryFormulaEngine.CategoryPreferences(),
+                sharedPreferences = sharedPreferences,
+            )
+
+        assertTrue(queries.isNotEmpty())
+        queries.forEach { query ->
+            assertTrue(query.contains("-vlog"), "Query should contain -vlog: $query")
+            assertTrue(query.contains("-review"), "Query should contain -review: $query")
+            assertTrue(query.contains("-talking"), "Query should contain -talking: $query")
+        }
+    }
+
+    @Test
+    @DisplayName("Drone queries should include gear waste negative terms")
+    fun testDroneQueriesIncludeGearWasteNegatives() {
+        val sharedPreferences = InMemorySharedPreferences(mutableMapOf())
+        val prefs =
+            QueryFormulaEngine.CategoryPreferences(
+                categoryNature = false,
+                categoryAnimals = false,
+                categoryDrone = true,
+                categoryCities = false,
+                categorySpace = false,
+                categoryOcean = false,
+                categoryWeather = false,
+                categoryWinter = false,
+            )
+        val queries =
+            QueryFormulaEngine.generateRingQueryPool(
+                count = 5,
+                prefs = prefs,
+                sharedPreferences = sharedPreferences,
+            )
+
+        queries.forEach { query ->
+            assertTrue(query.contains("-test"), "Drone query should contain -test: $query")
+            assertTrue(query.contains("-tutorial"), "Drone query should contain -tutorial: $query")
+            assertTrue(query.contains("-lut"), "Drone query should contain -lut: $query")
+        }
+    }
+
+    @Test
+    @DisplayName("getSpForCategory should return appropriate protobuf parameters")
+    fun testGetSpForCategory() {
+        assertEquals(QueryFormulaEngine.SP_VIDEO_4K_MEDIUM, QueryFormulaEngine.getSpForCategory(QueryFormulaEngine.ContentCategory.DRONE))
+        assertEquals(QueryFormulaEngine.SP_VIDEO_4K_MEDIUM, QueryFormulaEngine.getSpForCategory(QueryFormulaEngine.ContentCategory.NATURE))
+        assertEquals(QueryFormulaEngine.SP_VIDEO_4K_LONG, QueryFormulaEngine.getSpForCategory(QueryFormulaEngine.ContentCategory.SPACE))
+        assertEquals(QueryFormulaEngine.SP_VIDEO_4K_LONG, QueryFormulaEngine.getSpForCategory(QueryFormulaEngine.ContentCategory.WEATHER))
+    }
+
+    @Test
+    @DisplayName("categoryForQuery should resolve correctly with or without negative terms")
+    fun testCategoryForQueryWithAndWithoutNegatives() {
+        val droneWithNeg = "4k drone landscape geirangerfjord cinematic 4k -vlog -review -test"
+        val droneWithoutNeg = "4k drone landscape geirangerfjord cinematic 4k"
+
+        assertEquals(QueryFormulaEngine.ContentCategory.DRONE, QueryFormulaEngine.categoryForQuery(droneWithNeg))
+        assertEquals(QueryFormulaEngine.ContentCategory.DRONE, QueryFormulaEngine.categoryForQuery(droneWithoutNeg))
+    }
 }
